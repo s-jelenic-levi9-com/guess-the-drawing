@@ -86,7 +86,7 @@ Resources:
           cd /home/ec2-user/apps
           
           # Clone repository
-          git clone https://github.com/YOUR_USERNAME/my-bmad.git
+          git clone https://github.com/s-jelenic-levi9-com/guess-the-drawing.git
           cd my-bmad/guess-drawing-backend
           
           # Create minimal .env file (secrets will be fetched from AWS Secrets Manager at runtime)
