@@ -20,33 +20,6 @@ Parameters:
     Description: Name of an existing EC2 KeyPair for SSH access
     ConstraintDescription: Must be the name of an existing EC2 KeyPair
 
-  GitHubRepo:
-    Type: String
-    Default: https://github.com/YOUR_USERNAME/my-bmad.git
-    Description: GitHub repository URL
-
-  DBMasterPassword:
-    Type: String
-    NoEcho: true
-    Description: Database password (must match RDS stack parameter)
-
-  JWTSecret:
-    Type: String
-    NoEcho: true
-    Description: JWT secret key (min 32 characters)
-    MinLength: 32
-
-  JWTRefreshSecret:
-    Type: String
-    NoEcho: true
-    Description: JWT refresh secret key (min 32 characters)
-    MinLength: 32
-
-  CloudFrontDomain:
-    Type: String
-    Default: ''
-    Description: CloudFront domain for CORS (leave empty if not yet created)
-
 Mappings:
   AWSRegionToAMI:
     us-east-1:
@@ -113,35 +86,15 @@ Resources:
           cd /home/ec2-user/apps
           
           # Clone repository
-          git clone ${GitHubRepo}
+          git clone https://github.com/YOUR_USERNAME/my-bmad.git
           cd my-bmad/guess-drawing-backend
           
-          # Create .env file
+          # Create minimal .env file (secrets will be fetched from AWS Secrets Manager at runtime)
           cat > .env << 'EOF'
           NODE_ENV=production
           PORT=3000
-          
-          DATABASE_HOST=${DBEndpoint}
-          DATABASE_PORT=5432
-          DATABASE_NAME=guess_drawing
-          DATABASE_USER=postgres
-          DATABASE_PASSWORD=${DBMasterPassword}
           DATABASE_SSL=true
-          
-          REDIS_HOST=${RedisEndpoint}
-          REDIS_PORT=6379
-          REDIS_PASSWORD=
-          
-          JWT_SECRET=${JWTSecret}
-          JWT_REFRESH_SECRET=${JWTRefreshSecret}
-          JWT_EXPIRES_IN=15m
-          JWT_REFRESH_EXPIRES_IN=7d
-          
-          CORS_ORIGIN=${CorsOrigin}
-          
-          MAX_PLAYERS_PER_ROOM=8
-          DEFAULT_ROUND_TIME=90
-          DEFAULT_ROUNDS=3
+          AWS_REGION=${AWS::Region}
           EOF
           
           # Fix ownership
@@ -151,16 +104,11 @@ Resources:
           sudo -u ec2-user bash << 'USEREOF'
           cd /home/ec2-user/apps/my-bmad/guess-drawing-backend
           
-          # Install dependencies
+          # Install dependencies (including AWS SDK)
           npm ci --only=production
           
           # Build TypeScript
           npm run build
-          
-          # Run database migrations
-          export PGPASSWORD="${DBMasterPassword}"
-          psql -h ${DBEndpoint} -U postgres -d guess_drawing -f src/database/schema.sql || true
-          psql -h ${DBEndpoint} -U postgres -d guess_drawing -f src/database/seeds.sql || true
           
           # Start with PM2
           pm2 start dist/index.js --name guess-drawing-backend
@@ -203,6 +151,17 @@ Resources:
       ManagedPolicyArns:
         - arn:aws:iam::aws:policy/CloudWatchAgentServerPolicy
         - arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore
+      Policies:
+        - PolicyName: SecretsManagerAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - secretsmanager:GetSecretValue
+                  - secretsmanager:DescribeSecret
+                Resource:
+                  - !Sub 'arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:guess-drawing/*'
       Tags:
         - Key: Name
           Value: !Sub '${EnvironmentName}-ec2-role'

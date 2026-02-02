@@ -2,7 +2,7 @@ import express, { Application, Request, Response } from 'express';
 import { Server as SocketIOServer, Socket } from 'socket.io';
 import { createServer } from 'http';
 import cors from 'cors';
-import { config } from './config';
+import { config, initializeSecrets } from './config';
 import { RoomManager } from './services/RoomManager';
 import { GameService } from './services/GameService';
 import { DrawingService } from './services/DrawingService';
@@ -63,12 +63,22 @@ io.on('connection', (socket: Socket) => {
   gameSocketHandler.handleConnection(socket);
 });
 
-// Start server
-httpServer.listen(config.port, () => {
-  logger.info(`🚀 Server running on port ${config.port}`);
-  logger.info(`🎮 WebSocket server ready`);
-  logger.info(`📝 Environment: ${config.env}`);
-});
+// Start server with secrets initialization
+async function startServer() {
+  try {
+    // Initialize secrets from AWS Secrets Manager (with fallback to env vars)
+    await initializeSecrets();
+
+    httpServer.listen(config.port, () => {
+      logger.info(`🚀 Server running on port ${config.port}`);
+      logger.info(`🎮 WebSocket server ready`);
+      logger.info(`📝 Environment: ${config.env}`);
+    });
+  } catch (error) {
+    logger.error('❌ Failed to start server:', error);
+    process.exit(1);
+  }
+}
 
 // Graceful shutdown
 process.on('SIGTERM', () => {
@@ -78,5 +88,7 @@ process.on('SIGTERM', () => {
     process.exit(0);
   });
 });
+
+startServer();
 
 export { app, io };

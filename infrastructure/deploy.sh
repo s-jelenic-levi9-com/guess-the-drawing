@@ -157,7 +157,7 @@ deploy_infrastructure() {
     
     # Prompt for GitHub repository URL
     read -p "Enter your GitHub repository URL (default: https://github.com/YOUR_USERNAME/my-bmad.git): " GITHUB_REPO
-    GITHUB_REPO=${GITHUB_REPO:-"https://github.com/YOUR_USERNAME/my-bmad.git"}
+    GITHUB_REPO=${GITHUB_REPO:-"https://github.com/s-jelenic-levi9-com/guess-the-drawing.git"}
     
     print_info "=== Deployment Configuration ==="
     echo "Environment: $ENVIRONMENT_NAME"

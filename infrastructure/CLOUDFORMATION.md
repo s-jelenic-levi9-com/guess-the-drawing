@@ -87,12 +87,99 @@ aws sts get-caller-identity
 # 2. Create SSH key pair first
 aws ec2 create-key-pair \
   --key-name guess-drawing-key \
+  --region eu-west-1 \
   --query 'KeyMaterial' \
   --output text > ~/.ssh/guess-drawing-key.pem
 chmod 400 ~/.ssh/guess-drawing-key.pem
+```
 
-# 3. Update GitHub repo URL in the deployment script
-# Edit infrastructure/deploy.sh and replace YOUR_USERNAME with your GitHub username
+---
+
+## Security: AWS Secrets Manager Setup
+
+**Before deploying**, you need to create secrets in AWS Secrets Manager for secure credential storage:
+
+```bash
+# Secret 1: Database Credentials
+aws secretsmanager create-secret \
+  --name guess-drawing/db \
+  --description "PostgreSQL database credentials" \
+  --secret-string '{
+    "username":"postgres",
+    "password":"'"$(openssl rand -base64 32)"'",
+    "host":"guess-drawing-db.xxxxx.eu-west-1.rds.amazonaws.com",
+    "port":5432,
+    "dbname":"guess_drawing"
+  }' \
+  --region eu-west-1
+
+# Secret 2: JWT Secrets
+aws secretsmanager create-secret \
+  --name guess-drawing/jwt \
+  --description "JWT token secrets" \
+  --secret-string '{
+    "JWT_SECRET":"'"$(openssl rand -base64 32)"'",
+    "JWT_REFRESH_SECRET":"'"$(openssl rand -base64 32)"'"
+  }' \
+  --region eu-west-1
+
+# Secret 3: Redis Credentials
+aws secretsmanager create-secret \
+  --name guess-drawing/redis \
+  --description "Redis connection credentials" \
+  --secret-string '{
+    "host":"guess-drawing-redis.xxxxx.eu-west-1.cache.amazonaws.com",
+    "port":6379,
+    "password":""
+  }' \
+  --region eu-west-1
+```
+
+**⚠️  Important:** Replace the RDS and Redis endpoints with the actual endpoints from your CloudFormation outputs!
+
+Get these values after deploying the RDS and ElastiCache stacks:
+
+```bash
+# Get RDS endpoint
+RDS_ENDPOINT=$(aws cloudformation describe-stacks \
+  --stack-name guess-drawing-rds \
+  --query 'Stacks[0].Outputs[?OutputKey==`RDSEndpoint`].OutputValue' \
+  --region eu-west-1 --output text)
+
+# Get Redis endpoint  
+REDIS_ENDPOINT=$(aws cloudformation describe-stacks \
+  --stack-name guess-drawing-cache \
+  --query 'Stacks[0].Outputs[?OutputKey==`RedisEndpoint`].OutputValue' \
+  --region eu-west-1 --output text)
+
+echo "RDS: $RDS_ENDPOINT"
+echo "Redis: $REDIS_ENDPOINT"
+```
+
+Then update the secrets with actual endpoints:
+
+```bash
+# Update DB secret with actual endpoint
+aws secretsmanager update-secret \
+  --secret-id guess-drawing/db \
+  --secret-string '{
+    "username":"postgres",
+    "password":"YOUR_DB_PASSWORD",
+    "host":"'"$RDS_ENDPOINT"'",
+    "port":5432,
+    "dbname":"guess_drawing"
+  }' \
+  --region eu-west-1
+
+# Update Redis secret with actual endpoint
+aws secretsmanager update-secret \
+  --secret-id guess-drawing/redis \
+  --secret-string '{
+    "host":"'"$REDIS_ENDPOINT"'",
+    "port":6379,
+    "password":""
+  }' \
+  --region eu-west-1
 ```
 
 ### Option 1: Automated Deployment Script (Recommended)
@@ -115,192 +202,416 @@ The script will:
 - ✅ Print all endpoints and credentials
 - ✅ Provide next steps
 
-### Option 2: Manual CloudFormation Deployment
+### Option 2: Manual Step-by-Step Deployment
 
-#### Step 1: Deploy VPC Stack
+**Prerequisites:**
+- SSH key pair created: `~/.ssh/guess-drawing-key.pem` with permissions `chmod 400`
+- AWS CLI configured for region eu-west-1
+
+#### Step 1: Deploy VPC Stack (Base Infrastructure)
+
 ```bash
 aws cloudformation create-stack \
   --stack-name guess-drawing-vpc \
   --template-body file://infrastructure/cloudformation/01-vpc.yaml \
   --parameters ParameterKey=EnvironmentName,ParameterValue=guess-drawing \
-  --region us-east-1
+  --region eu-west-1
 
-# Wait for completion
-aws cloudformation wait stack-create-complete --stack-name guess-drawing-vpc
+# Wait for completion (takes ~2 minutes)
+aws cloudformation wait stack-create-complete \
+  --stack-name guess-drawing-vpc \
+  --region eu-west-1
+
+# Verify success
+aws cloudformation describe-stacks \
+  --stack-name guess-drawing-vpc \
+  --query 'Stacks[0].StackStatus' \
+  --region eu-west-1
 ```
 
-#### Step 2: Deploy RDS Stack
+#### Step 2: Deploy RDS Stack (Database)
+
 ```bash
-# Generate secure password
+# Generate secure password (save for updating secrets later)
 DB_PASSWORD=$(openssl rand -base64 32)
-echo "Database Password: $DB_PASSWORD" # SAVE THIS!
+echo "⚠️  Save this DB password (you'll need it for Secrets Manager later): $DB_PASSWORD"
 
 aws cloudformation create-stack \
   --stack-name guess-drawing-rds \
   --template-body file://infrastructure/cloudformation/02-rds.yaml \
   --parameters \
     ParameterKey=EnvironmentName,ParameterValue=guess-drawing \
-    ParameterKey=DBMasterPassword,ParameterValue="$DB_PASSWORD" \
-  --region us-east-1
+    ParameterKey=DBPassword,ParameterValue="$DB_PASSWORD" \
+  --region eu-west-1
 
 # Wait for completion (~10 minutes)
-aws cloudformation wait stack-create-complete --stack-name guess-drawing-rds
+echo "⏳ Waiting for RDS to be provisioned (this takes ~10 minutes)..."
+aws cloudformation wait stack-create-complete \
+  --stack-name guess-drawing-rds \
+  --region eu-west-1
+
+# Get RDS endpoint
+RDS_ENDPOINT=$(aws cloudformation describe-stacks \
+  --stack-name guess-drawing-rds \
+  --query 'Stacks[0].Outputs[?OutputKey==`RDSEndpoint`].OutputValue' \
+  --region eu-west-1 --output text)
+
+echo "✅ RDS Endpoint: $RDS_ENDPOINT"
+echo "ℹ️  Update Secrets Manager with this endpoint in Step 3"
 ```
 
-#### Step 3: Deploy ElastiCache Stack
+#### Step 3: Update AWS Secrets Manager with RDS & Redis Endpoints
+
+After RDS and ElastiCache are deployed, update the secrets with the actual endpoints:
+
+```bash
+# Update DB secret with RDS endpoint
+aws secretsmanager update-secret \
+  --secret-id guess-drawing/db \
+  --secret-string '{
+    "username":"postgres",
+    "password":"'"$DB_PASSWORD"'",
+    "host":"'"$RDS_ENDPOINT"'",
+    "port":5432,
+    "dbname":"guess_drawing"
+  }' \
+  --region eu-west-1
+
+# Update Redis secret (after ElastiCache is deployed in next step)
+# ℹ️  You'll do this after Step 4
+```
+
+#### Step 4: Deploy ElastiCache Stack (Redis Cache)
+
 ```bash
 aws cloudformation create-stack \
-  --stack-name guess-drawing-elasticache \
+  --stack-name guess-drawing-cache \
   --template-body file://infrastructure/cloudformation/03-elasticache.yaml \
   --parameters ParameterKey=EnvironmentName,ParameterValue=guess-drawing \
-  --region us-east-1
+  --region eu-west-1
 
 # Wait for completion (~5 minutes)
-aws cloudformation wait stack-create-complete --stack-name guess-drawing-elasticache
+echo "⏳ Waiting for ElastiCache Redis cluster (~5 minutes)..."
+aws cloudformation wait stack-create-complete \
+  --stack-name guess-drawing-cache \
+  --region eu-west-1
+
+# Get Redis endpoint
+REDIS_ENDPOINT=$(aws cloudformation describe-stacks \
+  --stack-name guess-drawing-cache \
+  --query 'Stacks[0].Outputs[?OutputKey==`RedisEndpoint`].OutputValue' \
+  --region eu-west-1 --output text)
+
+echo "✅ Redis Endpoint: $REDIS_ENDPOINT"
+
+# Update Redis secret with actual endpoint
+aws secretsmanager update-secret \
+  --secret-id guess-drawing/redis \
+  --secret-string '{
+    "host":"'"$REDIS_ENDPOINT"'",
+    "port":6379,
+    "password":""
+  }' \
+  --region eu-west-1
 ```
 
-#### Step 4: Deploy Frontend Stack
+#### Step 5: Deploy Frontend Stack (S3 + CloudFront)
+
 ```bash
 aws cloudformation create-stack \
   --stack-name guess-drawing-frontend \
   --template-body file://infrastructure/cloudformation/05-frontend.yaml \
   --parameters ParameterKey=EnvironmentName,ParameterValue=guess-drawing \
-  --region us-east-1
+  --region eu-west-1
 
-# Wait for completion
-aws cloudformation wait stack-create-complete --stack-name guess-drawing-frontend
+# Wait for stack creation (~5 minutes)
+aws cloudformation wait stack-create-complete \
+  --stack-name guess-drawing-frontend \
+  --region eu-west-1
+
+# Get S3 bucket and CloudFront info
+aws cloudformation describe-stacks \
+  --stack-name guess-drawing-frontend \
+  --query 'Stacks[0].Outputs[*].[OutputKey,OutputValue]' \
+  --region eu-west-1 --output table
 ```
 
-#### Step 5: Deploy EC2 Backend Stack
-```bash
-# Generate JWT secrets
-JWT_SECRET=$(openssl rand -base64 32)
-JWT_REFRESH_SECRET=$(openssl rand -base64 32)
-echo "JWT Secret: $JWT_SECRET" # SAVE THIS!
-echo "JWT Refresh Secret: $JWT_REFRESH_SECRET" # SAVE THIS!
+**Note:** CloudFront deployment takes 10-15 minutes total. Stack creation finishes quickly, but distribution deployment continues in background.
 
-# Get CloudFront domain
-CLOUDFRONT_DOMAIN=$(aws cloudformation describe-stacks \
-  --stack-name guess-drawing-frontend \
-  --query 'Stacks[0].Outputs[?OutputKey==`CloudFrontDomain`].OutputValue' \
-  --output text)
+#### Step 5: Deploy EC2 Backend Stack (Last)
+
+```bash
+# Note: JWT secrets are now stored in Secrets Manager, no need to pass them here
+# EC2 will fetch secrets from AWS Secrets Manager on startup
 
 aws cloudformation create-stack \
-  --stack-name guess-drawing-ec2 \
+  --stack-name guess-drawing-backend \
   --template-body file://infrastructure/cloudformation/04-ec2.yaml \
   --parameters \
     ParameterKey=EnvironmentName,ParameterValue=guess-drawing \
     ParameterKey=KeyName,ParameterValue=guess-drawing-key \
-    ParameterKey=GitHubRepo,ParameterValue=https://github.com/YOUR_USERNAME/my-bmad.git \
-    ParameterKey=DBMasterPassword,ParameterValue="$DB_PASSWORD" \
-    ParameterKey=JWTSecret,ParameterValue="$JWT_SECRET" \
-    ParameterKey=JWTRefreshSecret,ParameterValue="$JWT_REFRESH_SECRET" \
-    ParameterKey=CloudFrontDomain,ParameterValue="https://$CLOUDFRONT_DOMAIN" \
-  --capabilities CAPABILITY_IAM CAPABILITY_NAMED_IAM \
-  --region us-east-1
+  --region eu-west-1
 
-# Wait for completion (~5 minutes)
-aws cloudformation wait stack-create-complete --stack-name guess-drawing-ec2
+# Wait for EC2 stack (~3-5 minutes)
+aws cloudformation wait stack-create-complete \
+  --stack-name guess-drawing-backend \
+  --region eu-west-1
+
+# Get EC2 Elastic IP
+ELASTIC_IP=$(aws cloudformation describe-stacks \
+  --stack-name guess-drawing-backend \
+  --query 'Stacks[0].Outputs[?OutputKey==`ElasticIP`].OutputValue' \
+  --region eu-west-1 --output text)
+
+echo "✅ EC2 Elastic IP: $ELASTIC_IP"
 ```
 
-#### Step 6: Get All Outputs
-```bash
-# Backend IP
-aws cloudformation describe-stacks --stack-name guess-drawing-ec2 \
-  --query 'Stacks[0].Outputs[?OutputKey==`ElasticIP`].OutputValue' --output text
+#### Step 6: Monitor EC2 Setup (5-10 minutes)
 
-# Frontend URL
-aws cloudformation describe-stacks --stack-name guess-drawing-frontend \
-  --query 'Stacks[0].Outputs[?OutputKey==`CloudFrontURL`].OutputValue' --output text
-
-# Database Endpoint
-aws cloudformation describe-stacks --stack-name guess-drawing-rds \
-  --query 'Stacks[0].Outputs[?OutputKey==`DBEndpoint`].OutputValue' --output text
-
-# Redis Endpoint
-aws cloudformation describe-stacks --stack-name guess-drawing-elasticache \
-  --query 'Stacks[0].Outputs[?OutputKey==`RedisEndpoint`].OutputValue' --output text
-```
-
----
-
-## Post-Deployment Steps
-
-After CloudFormation completes, follow these manual steps:
-
-### 1. Update Frontend Configuration
+The EC2 instance runs an automated setup script. Monitor its progress:
 
 ```bash
-# Get backend IP
-BACKEND_IP=$(aws cloudformation describe-stacks --stack-name guess-drawing-ec2 \
-  --query 'Stacks[0].Outputs[?OutputKey==`ElasticIP`].OutputValue' --output text)
+# Wait a bit for EC2 to boot
+sleep 60
 
-# Edit frontend environment
-# Update guess-drawing-frontend/src/environments/environment.prod.ts:
-# apiUrl: 'http://<BACKEND_IP>:3000/api/v1'
-# wsUrl: 'ws://<BACKEND_IP>:3000'
+# SSH into the instance
+ssh -i ~/.ssh/guess-drawing-key.pem ec2-user@$ELASTIC_IP
+
+# Inside EC2:
+# Monitor PM2
+pm2 status
+pm2 logs guess-drawing-backend --lines 100
+
+# Verify Node.js and tools installed
+node --version
+npm --version
+pm2 --version
+
+# Check if backend is running
+curl http://localhost:3000/health
+
+# Exit SSH
+exit
 ```
 
-### 2. Build and Deploy Frontend
+#### Step 7: Test Backend from Local Machine
+
+```bash
+# Test health endpoint
+curl http://$ELASTIC_IP:3000/health
+
+# Should return 200 OK if database connection works
+```
+
+#### Step 8: Build and Upload Angular Frontend
 
 ```bash
 cd guess-drawing-frontend
+
+# Update environment.prod.ts with Elastic IP
+cat > src/environments/environment.prod.ts << EOF
+export const environment = {
+  production: true,
+  apiUrl: 'http://$ELASTIC_IP:3000/api/v1',
+  wsUrl: 'ws://$ELASTIC_IP:3000'
+};
+EOF
+
+# Build production
 npm install
 npm run build -- --configuration=production
 
-# Get S3 bucket name
-S3_BUCKET=$(aws cloudformation describe-stacks --stack-name guess-drawing-frontend \
-  --query 'Stacks[0].Outputs[?OutputKey==`BucketName`].OutputValue' --output text)
+# Get S3 bucket name from CloudFormation
+S3_BUCKET=$(aws cloudformation describe-stacks \
+  --stack-name guess-drawing-frontend \
+  --query 'Stacks[0].Outputs[?OutputKey==`S3BucketName`].OutputValue' \
+  --region eu-west-1 --output text)
+
+echo "Uploading to S3 bucket: $S3_BUCKET"
 
 # Upload to S3
-aws s3 sync dist/guess-drawing-frontend/browser/ s3://$S3_BUCKET --delete
+aws s3 sync dist/guess-drawing-frontend/browser/ s3://$S3_BUCKET --delete --region eu-west-1
 
-# Invalidate CloudFront
-CLOUDFRONT_ID=$(aws cloudformation describe-stacks --stack-name guess-drawing-frontend \
-  --query 'Stacks[0].Outputs[?OutputKey==`CloudFrontDistributionId`].OutputValue' --output text)
-
-aws cloudfront create-invalidation --distribution-id $CLOUDFRONT_ID --paths "/*"
+# Verify upload
+aws s3 ls s3://$S3_BUCKET --region eu-west-1
 ```
 
-### 3. Verify Backend is Running
+#### Step 9: Wait for CloudFront Deployment
+
+CloudFront takes 10-15 minutes to fully deploy. Monitor status:
 
 ```bash
-# SSH to EC2
-BACKEND_IP=$(aws cloudformation describe-stacks --stack-name guess-drawing-ec2 \
-  --query 'Stacks[0].Outputs[?OutputKey==`ElasticIP`].OutputValue' --output text)
+# Get CloudFront Distribution ID
+DIST_ID=$(aws cloudformation describe-stacks \
+  --stack-name guess-drawing-frontend \
+  --query 'Stacks[0].Outputs[?OutputKey==`CloudFrontDistributionId`].OutputValue' \
+  --region eu-west-1 --output text)
 
-ssh -i ~/.ssh/guess-drawing-key.pem ec2-user@$BACKEND_IP
+# Check status (wait for "Deployed")
+aws cloudfront get-distribution \
+  --id $DIST_ID \
+  --query 'Distribution.[DomainName,Status]'
 
-# Check PM2 status
-pm2 status
-pm2 logs guess-drawing-backend --lines 50
+# Get the CloudFront domain name
+CLOUDFRONT_DOMAIN=$(aws cloudfront get-distribution \
+  --id $DIST_ID \
+  --query 'Distribution.DomainName' \
+  --output text)
 
-# Test health endpoint
-curl http://localhost:3000/health
+echo "✅ CloudFront Domain: $CLOUDFRONT_DOMAIN"
+echo "Frontend URL: https://$CLOUDFRONT_DOMAIN"
 ```
 
-### 4. Set Up GitHub Actions (Optional)
+#### Step 10: Update Backend CORS
 
-Create workflow files from the templates in [DEPLOYMENT.md](DEPLOYMENT.md) Phase 6.
-
-Add these secrets to your GitHub repository:
+Once CloudFront domain is ready, SSH into EC2 and update CORS:
 
 ```bash
-# Get values from CloudFormation outputs
-AWS_REGION=us-east-1
-S3_BUCKET_NAME=$(aws cloudformation describe-stacks --stack-name guess-drawing-frontend \
-  --query 'Stacks[0].Outputs[?OutputKey==`BucketName`].OutputValue' --output text)
-CLOUDFRONT_DISTRIBUTION_ID=$(aws cloudformation describe-stacks --stack-name guess-drawing-frontend \
-  --query 'Stacks[0].Outputs[?OutputKey==`CloudFrontDistributionId`].OutputValue' --output text)
-EC2_HOST=$(aws cloudformation describe-stacks --stack-name guess-drawing-ec2 \
-  --query 'Stacks[0].Outputs[?OutputKey==`ElasticIP`].OutputValue' --output text)
-EC2_SSH_KEY=$(cat ~/.ssh/guess-drawing-key.pem)
-EC2_USER=ec2-user
+ssh -i ~/.ssh/guess-drawing-key.pem ec2-user@$ELASTIC_IP
+
+# Inside EC2:
+cd ~/apps/my-bmad/guess-drawing-backend
+
+# Update CORS to use CloudFront domain
+sed -i "s|CORS_ORIGIN=.*|CORS_ORIGIN=https://$CLOUDFRONT_DOMAIN|" .env
+
+# Verify change
+grep CORS_ORIGIN .env
+
+# Restart backend
+pm2 restart guess-drawing-backend
+
+# Check logs
+pm2 logs guess-drawing-backend --lines 20
+
+exit
+```
+
+#### Step 11: Verify All Endpoints
+
+```bash
+# Get all important endpoints
+echo "=== Deployment Complete ==="
+echo "Frontend: https://$CLOUDFRONT_DOMAIN"
+echo "Backend API: http://$ELASTIC_IP:3000"
+echo "Backend WebSocket: ws://$ELASTIC_IP:3000"
+echo "RDS Database: $RDS_ENDPOINT"
+echo "Redis Cache: $REDIS_ENDPOINT"
 ```
 
 ---
 
-## Updating Infrastructure
+## Security: AWS Secrets Manager Best Practices
+
+### How It Works
+
+The application now uses **AWS Secrets Manager** for secure credential storage:
+
+1. **Secrets are stored encrypted** in AWS (AES-256)
+2. **EC2 IAM role grants read-only access** to specific secrets
+3. **Backend fetches secrets on startup** - never exposed in .env files
+4. **Fallback to environment variables** if Secrets Manager fails (for development)
+
+### Viewing Secrets
+
+```bash
+# List all secrets
+aws secretsmanager list-secrets --filter Key=name,Values=guess-drawing --region eu-west-1
+
+# Get a specific secret (only the username/password, not the entire JSON)
+aws secretsmanager get-secret-value --secret-id guess-drawing/db --region eu-west-1
+```
+
+### Rotating Secrets
+
+You can manually rotate secrets:
+
+```bash
+# Rotate database password
+NEW_DB_PASSWORD=$(openssl rand -base64 32)
+
+aws secretsmanager update-secret \
+  --secret-id guess-drawing/db \
+  --secret-string '{
+    "username":"postgres",
+    "password":"'"$NEW_DB_PASSWORD"'",
+    "host":"'"$RDS_ENDPOINT"'",
+    "port":5432,
+    "dbname":"guess_drawing"
+  }' \
+  --region eu-west-1
+
+# Then update RDS password
+aws rds modify-db-instance \
+  --db-instance-identifier guess-drawing-db \
+  --master-user-password "$NEW_DB_PASSWORD" \
+  --apply-immediately \
+  --region eu-west-1
+
+# Restart backend (secrets are cached, restart picks up new value)
+ssh -i ~/.ssh/guess-drawing-key.pem ec2-user@$ELASTIC_IP
+pm2 restart guess-drawing-backend
+exit
+```
+
+### Secrets Cost
+
+AWS Secrets Manager charges approximately:
+
+- **$0.40 per secret per month** (so $1.20/month for 3 secrets)
+- Free within 12-month free tier for new AWS accounts
+
+---
+
+### 1. Test Application in Browser
+
+```bash
+# Open in browser
+https://$CLOUDFRONT_DOMAIN
+
+# Tests to perform:
+# ✅ Frontend loads without errors
+# ✅ No console errors (F12 → Console tab)
+# ✅ API calls working (F12 → Network → filter to /api/)
+# ✅ WebSocket connects (F12 → Network → filter to WS)
+# ✅ Can register new user
+# ✅ Can login
+# ✅ Can create game room
+# ✅ Drawing canvas works
+# ✅ Chat sends/receives
+# ✅ Real-time sync working
+```
+
+### 2. Add GitHub Secrets for CI/CD (Optional)
+
+Navigate to your GitHub repository and add these secrets:
+
+**Settings → Secrets and variables → Actions → New repository secret**
+
+| Secret | Value |
+|--------|-------|
+| `AWS_ACCESS_KEY_ID` | Your AWS access key |
+| `AWS_SECRET_ACCESS_KEY` | Your AWS secret key |
+| `AWS_REGION` | `eu-west-1` |
+| `S3_BUCKET_NAME` | From CloudFormation output |
+| `CLOUDFRONT_DISTRIBUTION_ID` | From CloudFormation output |
+| `EC2_HOST` | $ELASTIC_IP (from step above) |
+| `EC2_SSH_KEY` | Contents of `~/.ssh/guess-drawing-key.pem` |
+| `EC2_USER` | `ec2-user` |
+
+Get CloudFormation outputs:
+
+```bash
+# Get all stack outputs
+aws cloudformation describe-stacks \
+  --stack-name guess-drawing-frontend \
+  --query 'Stacks[0].Outputs' \
+  --region eu-west-1
+
+# Copy the S3_BUCKET_NAME and CLOUDFRONT_DISTRIBUTION_ID values
+```
+
+---
 
 ### Update Single Stack
 
@@ -311,11 +622,11 @@ aws cloudformation update-stack \
   --template-body file://infrastructure/cloudformation/02-rds.yaml \
   --parameters \
     ParameterKey=EnvironmentName,ParameterValue=guess-drawing \
-    ParameterKey=DBMasterPassword,UsePreviousValue=true \
-    ParameterKey=DBInstanceClass,ParameterValue=db.t3.small
+    ParameterKey=DBPassword,UsePreviousValue=true \
+  --region eu-west-1
 
 # Wait for update
-aws cloudformation wait stack-update-complete --stack-name guess-drawing-rds
+aws cloudformation wait stack-update-complete --stack-name guess-drawing-rds --region eu-west-1
 ```
 
 ### Update Backend Code
@@ -325,7 +636,7 @@ The backend will auto-update through:
 2. **SSH + PM2** - manual restart
 
 ```bash
-ssh -i ~/.ssh/guess-drawing-key.pem ec2-user@$BACKEND_IP
+ssh -i ~/.ssh/guess-drawing-key.pem ec2-user@$ELASTIC_IP
 cd ~/apps/my-bmad/guess-drawing-backend
 git pull origin main
 npm ci --only=production
@@ -337,36 +648,30 @@ pm2 restart guess-drawing-backend
 
 ## Destroy Infrastructure
 
-### Option 1: Using Script
-
-```bash
-./infrastructure/deploy.sh destroy
-```
-
-### Option 2: Manual Deletion
+### Option 1: Manual Deletion
 
 Delete stacks in reverse order (dependencies):
 
 ```bash
 # 1. EC2 (depends on everything)
-aws cloudformation delete-stack --stack-name guess-drawing-ec2
-aws cloudformation wait stack-delete-complete --stack-name guess-drawing-ec2
+aws cloudformation delete-stack --stack-name guess-drawing-backend --region eu-west-1
+aws cloudformation wait stack-delete-complete --stack-name guess-drawing-backend --region eu-west-1
 
 # 2. Frontend (independent)
-aws cloudformation delete-stack --stack-name guess-drawing-frontend
-aws cloudformation wait stack-delete-complete --stack-name guess-drawing-frontend
+aws cloudformation delete-stack --stack-name guess-drawing-frontend --region eu-west-1
+aws cloudformation wait stack-delete-complete --stack-name guess-drawing-frontend --region eu-west-1
 
 # 3. ElastiCache (depends on VPC)
-aws cloudformation delete-stack --stack-name guess-drawing-elasticache
-aws cloudformation wait stack-delete-complete --stack-name guess-drawing-elasticache
+aws cloudformation delete-stack --stack-name guess-drawing-cache --region eu-west-1
+aws cloudformation wait stack-delete-complete --stack-name guess-drawing-cache --region eu-west-1
 
 # 4. RDS (depends on VPC)
-aws cloudformation delete-stack --stack-name guess-drawing-rds
-aws cloudformation wait stack-delete-complete --stack-name guess-drawing-rds
+aws cloudformation delete-stack --stack-name guess-drawing-rds --region eu-west-1
+aws cloudformation wait stack-delete-complete --stack-name guess-drawing-rds --region eu-west-1
 
 # 5. VPC (no dependencies)
-aws cloudformation delete-stack --stack-name guess-drawing-vpc
-aws cloudformation wait stack-delete-complete --stack-name guess-drawing-vpc
+aws cloudformation delete-stack --stack-name guess-drawing-vpc --region eu-west-1
+aws cloudformation wait stack-delete-complete --stack-name guess-drawing-vpc --region eu-west-1
 ```
 
 ---
@@ -395,6 +700,7 @@ aws cloudformation wait stack-delete-complete --stack-name guess-drawing-vpc
 # View stack events
 aws cloudformation describe-stack-events \
   --stack-name guess-drawing-STACK_NAME \
+  --region eu-west-1 \
   --max-items 20
 
 # Common issues:
@@ -408,7 +714,7 @@ aws cloudformation describe-stack-events \
 
 ```bash
 # SSH to instance
-ssh -i ~/.ssh/guess-drawing-key.pem ec2-user@$BACKEND_IP
+ssh -i ~/.ssh/guess-drawing-key.pem ec2-user@$ELASTIC_IP
 
 # Check UserData log
 sudo cat /var/log/user-data.log
@@ -428,9 +734,10 @@ pm2 logs guess-drawing-backend
 ```bash
 # Force delete (skip resources that can't be deleted)
 aws cloudformation delete-stack \
-  --stack-name guess-drawing-STACK_NAME
+  --stack-name guess-drawing-STACK_NAME \
+  --region eu-west-1
 
-# Manually delete stuck resources via console
+# Manually delete stuck resources via AWS Console
 # Then retry stack deletion
 ```
 
