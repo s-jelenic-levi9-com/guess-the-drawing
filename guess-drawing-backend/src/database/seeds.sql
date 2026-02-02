@@ -1,0 +1,53 @@
+-- Seed words for the game
+INSERT INTO words (word, difficulty, category) VALUES
+  -- Easy words
+  ('cat', 'easy', 'animals'),
+  ('dog', 'easy', 'animals'),
+  ('sun', 'easy', 'nature'),
+  ('moon', 'easy', 'nature'),
+  ('tree', 'easy', 'nature'),
+  ('car', 'easy', 'vehicles'),
+  ('house', 'easy', 'buildings'),
+  ('book', 'easy', 'objects'),
+  ('apple', 'easy', 'food'),
+  ('ball', 'easy', 'objects'),
+  ('fish', 'easy', 'animals'),
+  ('star', 'easy', 'nature'),
+  ('flower', 'easy', 'nature'),
+  ('bird', 'easy', 'animals'),
+  ('chair', 'easy', 'objects'),
+  
+  -- Medium words
+  ('elephant', 'medium', 'animals'),
+  ('guitar', 'medium', 'music'),
+  ('computer', 'medium', 'technology'),
+  ('rainbow', 'medium', 'nature'),
+  ('mountain', 'medium', 'nature'),
+  ('bicycle', 'medium', 'vehicles'),
+  ('butterfly', 'medium', 'animals'),
+  ('lighthouse', 'medium', 'buildings'),
+  ('telescope', 'medium', 'objects'),
+  ('waterfall', 'medium', 'nature'),
+  ('airplane', 'medium', 'vehicles'),
+  ('umbrella', 'medium', 'objects'),
+  ('volcano', 'medium', 'nature'),
+  ('dolphin', 'medium', 'animals'),
+  ('camera', 'medium', 'technology'),
+  
+  -- Hard words
+  ('microscope', 'hard', 'science'),
+  ('constellation', 'hard', 'astronomy'),
+  ('architecture', 'hard', 'buildings'),
+  ('philosophy', 'hard', 'abstract'),
+  ('democracy', 'hard', 'abstract'),
+  ('photosynthesis', 'hard', 'science'),
+  ('kaleidoscope', 'hard', 'objects'),
+  ('chromosome', 'hard', 'science'),
+  ('equilibrium', 'hard', 'science'),
+  ('metamorphosis', 'hard', 'science'),
+  ('renaissance', 'hard', 'history'),
+  ('silhouette', 'hard', 'art'),
+  ('hieroglyphics', 'hard', 'history'),
+  ('synchronization', 'hard', 'abstract'),
+  ('thermometer', 'hard', 'objects')
+ON CONFLICT (word) DO NOTHING;
