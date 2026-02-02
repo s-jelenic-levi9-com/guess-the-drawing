@@ -1,0 +1,112 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'RDS PostgreSQL Database for Guess the Drawing Game'
+
+Parameters:
+  EnvironmentName:
+    Type: String
+    Default: guess-drawing
+    Description: Environment name prefix
+
+  DBMasterUsername:
+    Type: String
+    Default: postgres
+    Description: Database master username
+    NoEcho: false
+
+  DBMasterPassword:
+    Type: String
+    NoEcho: true
+    Description: Database master password (min 8 characters)
+    MinLength: 8
+    ConstraintDescription: Must be at least 8 characters
+
+  DBInstanceClass:
+    Type: String
+    Default: db.t3.micro
+    Description: Database instance class
+    AllowedValues:
+      - db.t3.micro
+      - db.t4g.micro
+
+  DBAllocatedStorage:
+    Type: Number
+    Default: 20
+    Description: Allocated storage in GB
+    MinValue: 20
+    MaxValue: 100
+
+Resources:
+  # DB Subnet Group
+  DBSubnetGroup:
+    Type: AWS::RDS::DBSubnetGroup
+    Properties:
+      DBSubnetGroupName: !Sub '${EnvironmentName}-db-subnet-group'
+      DBSubnetGroupDescription: Subnet group for RDS database
+      SubnetIds:
+        - Fn::ImportValue: !Sub '${EnvironmentName}-private-subnet-1'
+        - Fn::ImportValue: !Sub '${EnvironmentName}-private-subnet-2'
+      Tags:
+        - Key: Name
+          Value: !Sub '${EnvironmentName}-db-subnet-group'
+
+  # RDS PostgreSQL Instance
+  DBInstance:
+    Type: AWS::RDS::DBInstance
+    DeletionPolicy: Snapshot
+    Properties:
+      DBInstanceIdentifier: !Sub '${EnvironmentName}-db'
+      DBName: guess_drawing
+      Engine: postgres
+      EngineVersion: '15.4'
+      DBInstanceClass: !Ref DBInstanceClass
+      AllocatedStorage: !Ref DBAllocatedStorage
+      StorageType: gp2
+      StorageEncrypted: true
+      MasterUsername: !Ref DBMasterUsername
+      MasterUserPassword: !Ref DBMasterPassword
+      VPCSecurityGroups:
+        - Fn::ImportValue: !Sub '${EnvironmentName}-rds-sg-id'
+      DBSubnetGroupName: !Ref DBSubnetGroup
+      PubliclyAccessible: false
+      BackupRetentionPeriod: 7
+      PreferredBackupWindow: '03:00-04:00'
+      PreferredMaintenanceWindow: 'sun:04:00-sun:05:00'
+      EnableCloudwatchLogsExports:
+        - postgresql
+      DeletionProtection: false
+      Tags:
+        - Key: Name
+          Value: !Sub '${EnvironmentName}-postgres-db'
+        - Key: Environment
+          Value: !Ref EnvironmentName
+
+Outputs:
+  DBEndpoint:
+    Description: RDS PostgreSQL Endpoint
+    Value: !GetAtt DBInstance.Endpoint.Address
+    Export:
+      Name: !Sub '${EnvironmentName}-db-endpoint'
+
+  DBPort:
+    Description: RDS PostgreSQL Port
+    Value: !GetAtt DBInstance.Endpoint.Port
+    Export:
+      Name: !Sub '${EnvironmentName}-db-port'
+
+  DBName:
+    Description: Database Name
+    Value: guess_drawing
+    Export:
+      Name: !Sub '${EnvironmentName}-db-name'
+
+  DBUsername:
+    Description: Database Master Username
+    Value: !Ref DBMasterUsername
+    Export:
+      Name: !Sub '${EnvironmentName}-db-username'
+
+  DBInstanceId:
+    Description: RDS Instance ID
+    Value: !Ref DBInstance
+    Export:
+      Name: !Sub '${EnvironmentName}-db-instance-id'

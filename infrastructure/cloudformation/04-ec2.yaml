@@ -1,0 +1,245 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'EC2 Backend Server for Guess the Drawing Game'
+
+Parameters:
+  EnvironmentName:
+    Type: String
+    Default: guess-drawing
+    Description: Environment name prefix
+
+  InstanceType:
+    Type: String
+    Default: t2.micro
+    Description: EC2 instance type
+    AllowedValues:
+      - t2.micro
+      - t3.micro
+
+  KeyName:
+    Type: AWS::EC2::KeyPair::KeyName
+    Description: Name of an existing EC2 KeyPair for SSH access
+    ConstraintDescription: Must be the name of an existing EC2 KeyPair
+
+  GitHubRepo:
+    Type: String
+    Default: https://github.com/YOUR_USERNAME/my-bmad.git
+    Description: GitHub repository URL
+
+  DBMasterPassword:
+    Type: String
+    NoEcho: true
+    Description: Database password (must match RDS stack parameter)
+
+  JWTSecret:
+    Type: String
+    NoEcho: true
+    Description: JWT secret key (min 32 characters)
+    MinLength: 32
+
+  JWTRefreshSecret:
+    Type: String
+    NoEcho: true
+    Description: JWT refresh secret key (min 32 characters)
+    MinLength: 32
+
+  CloudFrontDomain:
+    Type: String
+    Default: ''
+    Description: CloudFront domain for CORS (leave empty if not yet created)
+
+Mappings:
+  AWSRegionToAMI:
+    us-east-1:
+      AMI: ami-0c101f26f147fa7fd  # Amazon Linux 2023
+    us-west-2:
+      AMI: ami-0efb097fb8fd3e739
+    eu-west-1:
+      AMI: ami-0694d931cee176e7d
+
+Resources:
+  # Elastic IP
+  ElasticIP:
+    Type: AWS::EC2::EIP
+    Properties:
+      Domain: vpc
+      Tags:
+        - Key: Name
+          Value: !Sub '${EnvironmentName}-backend-eip'
+
+  # EC2 Instance
+  EC2Instance:
+    Type: AWS::EC2::Instance
+    Properties:
+      InstanceType: !Ref InstanceType
+      ImageId: !FindInMap [AWSRegionToAMI, !Ref 'AWS::Region', AMI]
+      KeyName: !Ref KeyName
+      NetworkInterfaces:
+        - AssociatePublicIpAddress: true
+          DeviceIndex: '0'
+          GroupSet:
+            - Fn::ImportValue: !Sub '${EnvironmentName}-ec2-sg-id'
+          SubnetId:
+            Fn::ImportValue: !Sub '${EnvironmentName}-public-subnet-1'
+      IamInstanceProfile: !Ref EC2InstanceProfile
+      UserData:
+        Fn::Base64: !Sub |
+          #!/bin/bash
+          set -e
+          
+          # Log everything
+          exec > >(tee /var/log/user-data.log)
+          exec 2>&1
+          
+          echo "Starting EC2 instance setup..."
+          
+          # Update system
+          yum update -y
+          
+          # Install Node.js 20
+          curl -fsSL https://rpm.nodesource.com/setup_20.x | bash -
+          yum install -y nodejs
+          
+          # Install Git
+          yum install -y git
+          
+          # Install PostgreSQL client
+          yum install -y postgresql15
+          
+          # Install PM2 globally
+          npm install -g pm2
+          
+          # Create app directory
+          mkdir -p /home/ec2-user/apps
+          cd /home/ec2-user/apps
+          
+          # Clone repository
+          git clone ${GitHubRepo}
+          cd my-bmad/guess-drawing-backend
+          
+          # Create .env file
+          cat > .env << 'EOF'
+          NODE_ENV=production
+          PORT=3000
+          
+          DATABASE_HOST=${DBEndpoint}
+          DATABASE_PORT=5432
+          DATABASE_NAME=guess_drawing
+          DATABASE_USER=postgres
+          DATABASE_PASSWORD=${DBMasterPassword}
+          DATABASE_SSL=true
+          
+          REDIS_HOST=${RedisEndpoint}
+          REDIS_PORT=6379
+          REDIS_PASSWORD=
+          
+          JWT_SECRET=${JWTSecret}
+          JWT_REFRESH_SECRET=${JWTRefreshSecret}
+          JWT_EXPIRES_IN=15m
+          JWT_REFRESH_EXPIRES_IN=7d
+          
+          CORS_ORIGIN=${CorsOrigin}
+          
+          MAX_PLAYERS_PER_ROOM=8
+          DEFAULT_ROUND_TIME=90
+          DEFAULT_ROUNDS=3
+          EOF
+          
+          # Fix ownership
+          chown -R ec2-user:ec2-user /home/ec2-user/apps
+          
+          # Switch to ec2-user and install dependencies
+          sudo -u ec2-user bash << 'USEREOF'
+          cd /home/ec2-user/apps/my-bmad/guess-drawing-backend
+          
+          # Install dependencies
+          npm ci --only=production
+          
+          # Build TypeScript
+          npm run build
+          
+          # Run database migrations
+          export PGPASSWORD="${DBMasterPassword}"
+          psql -h ${DBEndpoint} -U postgres -d guess_drawing -f src/database/schema.sql || true
+          psql -h ${DBEndpoint} -U postgres -d guess_drawing -f src/database/seeds.sql || true
+          
+          # Start with PM2
+          pm2 start dist/index.js --name guess-drawing-backend
+          pm2 save
+          
+          # Setup PM2 startup
+          pm2 startup systemd -u ec2-user --hp /home/ec2-user
+          USEREOF
+          
+          # Enable PM2 startup
+          env PATH=$PATH:/usr/bin /usr/local/lib/node_modules/pm2/bin/pm2 startup systemd -u ec2-user --hp /home/ec2-user
+          
+          echo "EC2 instance setup complete!"
+
+      Tags:
+        - Key: Name
+          Value: !Sub '${EnvironmentName}-backend'
+        - Key: Environment
+          Value: !Ref EnvironmentName
+
+  # Associate Elastic IP
+  EIPAssociation:
+    Type: AWS::EC2::EIPAssociation
+    Properties:
+      InstanceId: !Ref EC2Instance
+      EIP: !Ref ElasticIP
+
+  # IAM Role for EC2
+  EC2Role:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub '${EnvironmentName}-ec2-role'
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ec2.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/CloudWatchAgentServerPolicy
+        - arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore
+      Tags:
+        - Key: Name
+          Value: !Sub '${EnvironmentName}-ec2-role'
+
+  # Instance Profile
+  EC2InstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      InstanceProfileName: !Sub '${EnvironmentName}-ec2-profile'
+      Roles:
+        - !Ref EC2Role
+
+Outputs:
+  InstanceId:
+    Description: EC2 Instance ID
+    Value: !Ref EC2Instance
+    Export:
+      Name: !Sub '${EnvironmentName}-ec2-instance-id'
+
+  ElasticIP:
+    Description: Elastic IP Address
+    Value: !Ref ElasticIP
+    Export:
+      Name: !Sub '${EnvironmentName}-backend-ip'
+
+  BackendURL:
+    Description: Backend API URL
+    Value: !Sub 'http://${ElasticIP}:3000'
+    Export:
+      Name: !Sub '${EnvironmentName}-backend-url'
+
+  WebSocketURL:
+    Description: WebSocket URL
+    Value: !Sub 'ws://${ElasticIP}:3000'
+    Export:
+      Name: !Sub '${EnvironmentName}-ws-url'
+
+  SSHCommand:
+    Description: SSH command to connect to the instance
+    Value: !Sub 'ssh -i ~/.ssh/${KeyName}.pem ec2-user@${ElasticIP}'

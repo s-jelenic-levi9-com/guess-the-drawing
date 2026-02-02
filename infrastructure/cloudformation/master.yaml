@@ -1,0 +1,159 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'Master Stack - Orchestrates all infrastructure for Guess the Drawing Game'
+
+Parameters:
+  EnvironmentName:
+    Type: String
+    Default: guess-drawing
+    Description: Environment name prefix for all resources
+
+  DBMasterPassword:
+    Type: String
+    NoEcho: true
+    Description: Database master password (min 8 characters)
+    MinLength: 8
+    ConstraintDescription: Must be at least 8 characters
+
+  KeyName:
+    Type: AWS::EC2::KeyPair::KeyName
+    Description: Name of an existing EC2 KeyPair for SSH access
+
+  GitHubRepo:
+    Type: String
+    Default: https://github.com/YOUR_USERNAME/my-bmad.git
+    Description: GitHub repository URL
+
+  JWTSecret:
+    Type: String
+    NoEcho: true
+    Description: JWT secret key (min 32 characters)
+    MinLength: 32
+
+  JWTRefreshSecret:
+    Type: String
+    NoEcho: true
+    Description: JWT refresh secret key (min 32 characters)
+    MinLength: 32
+
+Resources:
+  # VPC Stack
+  VPCStack:
+    Type: AWS::CloudFormation::Stack
+    Properties:
+      TemplateURL: !Sub 'https://s3.amazonaws.com/${DeploymentBucket}/01-vpc.yaml'
+      Parameters:
+        EnvironmentName: !Ref EnvironmentName
+      Tags:
+        - Key: Name
+          Value: !Sub '${EnvironmentName}-vpc-stack'
+
+  # RDS Stack
+  RDSStack:
+    Type: AWS::CloudFormation::Stack
+    DependsOn: VPCStack
+    Properties:
+      TemplateURL: !Sub 'https://s3.amazonaws.com/${DeploymentBucket}/02-rds.yaml'
+      Parameters:
+        EnvironmentName: !Ref EnvironmentName
+        DBMasterPassword: !Ref DBMasterPassword
+      Tags:
+        - Key: Name
+          Value: !Sub '${EnvironmentName}-rds-stack'
+
+  # ElastiCache Stack
+  ElastiCacheStack:
+    Type: AWS::CloudFormation::Stack
+    DependsOn: VPCStack
+    Properties:
+      TemplateURL: !Sub 'https://s3.amazonaws.com/${DeploymentBucket}/03-elasticache.yaml'
+      Parameters:
+        EnvironmentName: !Ref EnvironmentName
+      Tags:
+        - Key: Name
+          Value: !Sub '${EnvironmentName}-cache-stack'
+
+  # Frontend Stack
+  FrontendStack:
+    Type: AWS::CloudFormation::Stack
+    Properties:
+      TemplateURL: !Sub 'https://s3.amazonaws.com/${DeploymentBucket}/05-frontend.yaml'
+      Parameters:
+        EnvironmentName: !Ref EnvironmentName
+      Tags:
+        - Key: Name
+          Value: !Sub '${EnvironmentName}-frontend-stack'
+
+  # EC2 Stack
+  EC2Stack:
+    Type: AWS::CloudFormation::Stack
+    DependsOn:
+      - VPCStack
+      - RDSStack
+      - ElastiCacheStack
+      - FrontendStack
+    Properties:
+      TemplateURL: !Sub 'https://s3.amazonaws.com/${DeploymentBucket}/04-ec2.yaml'
+      Parameters:
+        EnvironmentName: !Ref EnvironmentName
+        KeyName: !Ref KeyName
+        GitHubRepo: !Ref GitHubRepo
+        DBMasterPassword: !Ref DBMasterPassword
+        JWTSecret: !Ref JWTSecret
+        JWTRefreshSecret: !Ref JWTRefreshSecret
+        CloudFrontDomain: !GetAtt FrontendStack.Outputs.CloudFrontDomain
+      Tags:
+        - Key: Name
+          Value: !Sub '${EnvironmentName}-ec2-stack'
+
+  # S3 Bucket for CloudFormation templates
+  DeploymentBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub '${EnvironmentName}-cf-templates-${AWS::AccountId}'
+      AccessControl: Private
+      VersioningConfiguration:
+        Status: Enabled
+      Tags:
+        - Key: Name
+          Value: !Sub '${EnvironmentName}-cf-templates'
+
+Outputs:
+  VPCId:
+    Description: VPC ID
+    Value: !GetAtt VPCStack.Outputs.VPCId
+
+  DBEndpoint:
+    Description: RDS PostgreSQL Endpoint
+    Value: !GetAtt RDSStack.Outputs.DBEndpoint
+
+  RedisEndpoint:
+    Description: ElastiCache Redis Endpoint
+    Value: !GetAtt ElastiCacheStack.Outputs.RedisEndpoint
+
+  BackendIP:
+    Description: Backend Server Elastic IP
+    Value: !GetAtt EC2Stack.Outputs.ElasticIP
+
+  BackendURL:
+    Description: Backend API URL
+    Value: !GetAtt EC2Stack.Outputs.BackendURL
+
+  FrontendURL:
+    Description: Frontend URL (CloudFront)
+    Value: !GetAtt FrontendStack.Outputs.CloudFrontURL
+
+  CloudFrontDistributionId:
+    Description: CloudFront Distribution ID (for cache invalidation)
+    Value: !GetAtt FrontendStack.Outputs.CloudFrontDistributionId
+
+  S3BucketName:
+    Description: S3 Bucket Name for Frontend
+    Value: !GetAtt FrontendStack.Outputs.BucketName
+
+  SSHCommand:
+    Description: SSH command to connect to backend
+    Value: !GetAtt EC2Stack.Outputs.SSHCommand
+
+  DeploymentBucketName:
+    Description: S3 Bucket for CloudFormation Templates
+    Value: !Ref DeploymentBucket

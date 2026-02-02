@@ -1,0 +1,68 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'ElastiCache Redis for Guess the Drawing Game'
+
+Parameters:
+  EnvironmentName:
+    Type: String
+    Default: guess-drawing
+    Description: Environment name prefix
+
+  CacheNodeType:
+    Type: String
+    Default: cache.t3.micro
+    Description: Cache node type
+    AllowedValues:
+      - cache.t2.micro
+      - cache.t3.micro
+      - cache.t4g.micro
+
+Resources:
+  # Cache Subnet Group
+  CacheSubnetGroup:
+    Type: AWS::ElastiCache::SubnetGroup
+    Properties:
+      CacheSubnetGroupName: !Sub '${EnvironmentName}-cache-subnet-group'
+      Description: Subnet group for ElastiCache Redis
+      SubnetIds:
+        - Fn::ImportValue: !Sub '${EnvironmentName}-private-subnet-1'
+        - Fn::ImportValue: !Sub '${EnvironmentName}-private-subnet-2'
+
+  # ElastiCache Redis Cluster
+  RedisCluster:
+    Type: AWS::ElastiCache::CacheCluster
+    Properties:
+      CacheClusterId: !Sub '${EnvironmentName}-redis'
+      Engine: redis
+      CacheNodeType: !Ref CacheNodeType
+      NumCacheNodes: 1
+      Port: 6379
+      VpcSecurityGroupIds:
+        - Fn::ImportValue: !Sub '${EnvironmentName}-cache-sg-id'
+      CacheSubnetGroupName: !Ref CacheSubnetGroup
+      PreferredMaintenanceWindow: 'sun:05:00-sun:06:00'
+      SnapshotRetentionLimit: 5
+      SnapshotWindow: '03:00-04:00'
+      Tags:
+        - Key: Name
+          Value: !Sub '${EnvironmentName}-redis'
+        - Key: Environment
+          Value: !Ref EnvironmentName
+
+Outputs:
+  RedisEndpoint:
+    Description: ElastiCache Redis Endpoint
+    Value: !GetAtt RedisCluster.RedisEndpoint.Address
+    Export:
+      Name: !Sub '${EnvironmentName}-redis-endpoint'
+
+  RedisPort:
+    Description: ElastiCache Redis Port
+    Value: !GetAtt RedisCluster.RedisEndpoint.Port
+    Export:
+      Name: !Sub '${EnvironmentName}-redis-port'
+
+  RedisClusterId:
+    Description: ElastiCache Redis Cluster ID
+    Value: !Ref RedisCluster
+    Export:
+      Name: !Sub '${EnvironmentName}-redis-cluster-id'
