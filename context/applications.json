@@ -1,0 +1,77 @@
+{
+  "applications": {
+    "guess-the-drawing": {
+      "name": "Guess the Drawing - Multiplayer Game",
+      "description": "Real-time multiplayer drawing game where players take turns drawing words while others guess. Built with Angular 18+ and Node.js with WebSocket technology for seamless real-time interaction.",
+      "technology_stack": [
+        "Angular 18+",
+        "TypeScript",
+        "Node.js 20+",
+        "Express.js",
+        "Socket.IO",
+        "PostgreSQL",
+        "Redis",
+        "TailwindCSS",
+        "RxJS",
+        "JWT",
+        "Docker",
+        "Nginx"
+      ],
+      "architecture": {
+        "type": "Real-time Microservices with WebSocket Communication",
+        "description": "Horizontally scalable architecture with stateless API servers and WebSocket servers. Redis handles session management and pub/sub for cross-server communication. PostgreSQL stores persistent data."
+      },
+      "repositories": [
+        {
+          "name": "guess-drawing-frontend",
+          "url": "https://github.com/yourorg/guess-drawing-frontend",
+          "description": "Angular 18+ frontend with Canvas API for drawing, Socket.IO client for real-time updates"
+        },
+        {
+          "name": "guess-drawing-backend",
+          "url": "https://github.com/yourorg/guess-drawing-backend",
+          "description": "Node.js backend with Express REST API and Socket.IO WebSocket server"
+        }
+      ],
+      "key_services": [
+        {
+          "name": "Game Service",
+          "description": "Manages game rooms, player matching, turn rotation, word selection, scoring, and game state synchronization",
+          "tech": "Node.js + Socket.IO + Redis"
+        },
+        {
+          "name": "Drawing Service",
+          "description": "Handles canvas data streaming, drawing compression, broadcast to players, and optional replay functionality",
+          "tech": "Node.js + Socket.IO + Binary Protocol"
+        },
+        {
+          "name": "User Service",
+          "description": "User authentication (JWT), profile management, statistics tracking, and friend system",
+          "tech": "Node.js + Express + PostgreSQL"
+        },
+        {
+          "name": "Chat Service",
+          "description": "In-game chat, guess submission, profanity filtering, and rate limiting",
+          "tech": "Node.js + Socket.IO + Redis"
+        }
+      ],
+      "apis": [
+        {
+          "name": "REST API",
+          "base_url": "https://api.guessdrawing.com/v1",
+          "documentation": "https://docs.guessdrawing.com/api"
+        },
+        {
+          "name": "WebSocket API",
+          "base_url": "wss://ws.guessdrawing.com",
+          "documentation": "https://docs.guessdrawing.com/websocket"
+        }
+      ],
+      "infrastructure": {
+        "cloud": "AWS / DigitalOcean",
+        "deployment": "Docker + Nginx reverse proxy with load balancing",
+        "monitoring": "Prometheus + Grafana + Winston logging"
+      }
+    }
+  }
+}
