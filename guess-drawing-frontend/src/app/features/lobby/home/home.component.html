@@ -1,0 +1,163 @@
+<div class="min-h-screen bg-gradient-to-br from-purple-600 to-blue-500">
+  <!-- Header -->
+  <header class="bg-white/10 backdrop-blur-sm">
+    <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4 flex justify-between items-center">
+      <h1 class="text-2xl font-bold text-white">🎨 Guess the Drawing</h1>
+      <div class="flex items-center gap-4">
+        <span class="text-white/80">Welcome, {{ authService.user()?.username }}</span>
+        <button
+          (click)="logout()"
+          class="px-4 py-2 text-sm font-medium text-purple-600 bg-white rounded-lg hover:bg-gray-100 transition"
+        >
+          Logout
+        </button>
+      </div>
+    </div>
+  </header>
+
+  <!-- Main Content -->
+  <main class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-12">
+    <!-- Hero Section -->
+    <div class="text-center mb-12">
+      <h2 class="text-5xl font-bold text-white mb-4">Ready to Draw & Guess?</h2>
+      <p class="text-xl text-white/80">Join a room or create your own game!</p>
+    </div>
+
+    <!-- Action Buttons -->
+    <div class="flex flex-col sm:flex-row justify-center gap-4 mb-12">
+      <button
+        (click)="createRoom()"
+        [disabled]="isCreating()"
+        class="px-8 py-4 text-xl font-bold text-white bg-green-500 rounded-xl hover:bg-green-600 shadow-lg hover:shadow-xl transform hover:-translate-y-1 transition disabled:opacity-50"
+      >
+        @if (isCreating()) {
+          Creating...
+        } @else {
+          ✨ Create New Room
+        }
+      </button>
+      <button
+        (click)="quickJoin()"
+        class="px-8 py-4 text-xl font-bold text-white bg-orange-500 rounded-xl hover:bg-orange-600 shadow-lg hover:shadow-xl transform hover:-translate-y-1 transition"
+      >
+        ⚡ Quick Join
+      </button>
+    </div>
+
+    <!-- Join Room Input -->
+    <div class="max-w-md mx-auto mb-12">
+      <div class="bg-white rounded-xl shadow-lg p-6">
+        <h3 class="text-lg font-semibold text-gray-900 mb-4">Join with Room Code</h3>
+        <div class="flex gap-2">
+          <input
+            type="text"
+            #roomCodeInput
+            placeholder="Enter room code"
+            class="flex-1 px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent uppercase"
+            maxlength="6"
+          />
+          <button
+            (click)="joinRoom(roomCodeInput.value)"
+            class="px-6 py-3 bg-purple-600 text-white font-medium rounded-lg hover:bg-purple-700 transition"
+          >
+            Join
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Active Rooms -->
+    <div class="bg-white/10 backdrop-blur-sm rounded-2xl p-6">
+      <div class="flex justify-between items-center mb-6">
+        <h3 class="text-2xl font-bold text-white">🎮 Active Rooms</h3>
+        <button
+          (click)="refreshRooms()"
+          class="px-4 py-2 text-sm font-medium text-white/80 hover:text-white transition"
+        >
+          🔄 Refresh
+        </button>
+      </div>
+
+      @if (isLoading()) {
+        <div class="text-center py-8">
+          <div class="animate-spin rounded-full h-12 w-12 border-4 border-white/30 border-t-white mx-auto"></div>
+          <p class="mt-4 text-white/80">Loading rooms...</p>
+        </div>
+      } @else if (rooms().length === 0) {
+        <div class="text-center py-12">
+          <p class="text-6xl mb-4">🏠</p>
+          <p class="text-xl text-white/80">No active rooms found</p>
+          <p class="text-white/60 mt-2">Create one to start playing!</p>
+        </div>
+      } @else {
+        <div class="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+          @for (room of rooms(); track room.code) {
+            <div class="bg-white rounded-xl p-5 shadow-lg hover:shadow-xl transition">
+              <div class="flex justify-between items-start mb-3">
+                <div>
+                  <span class="text-xs font-medium text-gray-500">Room Code</span>
+                  <p class="text-xl font-bold text-gray-900">{{ room.code }}</p>
+                </div>
+                <span 
+                  class="px-3 py-1 text-xs font-medium rounded-full"
+                  [ngClass]="{
+                    'bg-green-100 text-green-700': room.status === 'waiting',
+                    'bg-yellow-100 text-yellow-700': room.status === 'playing',
+                    'bg-gray-100 text-gray-700': room.status === 'finished'
+                  }"
+                >
+                  {{ room.status }}
+                </span>
+              </div>
+              
+              <div class="flex items-center gap-2 mb-4">
+                <span class="text-2xl">👥</span>
+                <span class="text-gray-700">{{ room.players.length }} / {{ room.maxPlayers }} players</span>
+              </div>
+
+              <div class="text-sm text-gray-500 mb-4">
+                <p>Rounds: {{ room.settings.rounds }} | Time: {{ room.settings.roundTime }}s</p>
+              </div>
+
+              <button
+                (click)="joinRoom(room.code)"
+                [disabled]="room.status !== 'waiting' || room.players.length >= room.maxPlayers"
+                class="w-full py-2 px-4 bg-purple-600 text-white font-medium rounded-lg hover:bg-purple-700 disabled:bg-gray-300 disabled:cursor-not-allowed transition"
+              >
+                @if (room.status !== 'waiting') {
+                  Game in Progress
+                } @else if (room.players.length >= room.maxPlayers) {
+                  Room Full
+                } @else {
+                  Join Room
+                }
+              </button>
+            </div>
+          }
+        </div>
+      }
+    </div>
+
+    <!-- Game Rules -->
+    <div class="mt-12 bg-white/10 backdrop-blur-sm rounded-2xl p-6">
+      <h3 class="text-2xl font-bold text-white mb-6">📖 How to Play</h3>
+      <div class="grid md:grid-cols-3 gap-6">
+        <div class="text-center">
+          <div class="text-5xl mb-4">✏️</div>
+          <h4 class="text-lg font-semibold text-white mb-2">Draw</h4>
+          <p class="text-white/70">Take turns drawing the secret word on the canvas</p>
+        </div>
+        <div class="text-center">
+          <div class="text-5xl mb-4">💭</div>
+          <h4 class="text-lg font-semibold text-white mb-2">Guess</h4>
+          <p class="text-white/70">Type your guesses in the chat - faster guesses = more points!</p>
+        </div>
+        <div class="text-center">
+          <div class="text-5xl mb-4">🏆</div>
+          <h4 class="text-lg font-semibold text-white mb-2">Win</h4>
+          <p class="text-white/70">Score the most points across all rounds to win!</p>
+        </div>
+      </div>
+    </div>
+  </main>
+</div>

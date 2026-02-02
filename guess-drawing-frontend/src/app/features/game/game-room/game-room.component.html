@@ -1,0 +1,152 @@
+<div class="h-screen flex flex-col bg-gray-100">
+  <!-- Header -->
+  <header class="bg-purple-600 text-white px-4 py-3 shadow-lg">
+    <div class="max-w-7xl mx-auto flex justify-between items-center">
+      <div class="flex items-center gap-4">
+        <button
+          (click)="leaveRoom()"
+          class="p-2 hover:bg-white/20 rounded-lg transition"
+        >
+          ← Leave
+        </button>
+        <h1 class="text-xl font-bold">Room: {{ roomCode }}</h1>
+      </div>
+      
+      <div class="flex items-center gap-6">
+        @if (gameActive()) {
+          <div class="flex items-center gap-3">
+            <span class="text-white/80">Round {{ currentRound() }}/{{ maxRounds() }}</span>
+            <app-timer [duration]="roundDuration()" [startTime]="roundStartTime()"></app-timer>
+          </div>
+        }
+        
+        @if (currentWord()) {
+          <div class="bg-white/20 px-4 py-2 rounded-lg">
+            <span class="text-sm">Your word:</span>
+            <span class="ml-2 text-lg font-bold tracking-widest">{{ currentWord() }}</span>
+          </div>
+        } @else if (wordHint()) {
+          <div class="bg-white/20 px-4 py-2 rounded-lg">
+            <span class="text-sm">Hint:</span>
+            <span class="ml-2 text-lg font-bold tracking-widest">{{ wordHint() }}</span>
+          </div>
+        }
+      </div>
+    </div>
+  </header>
+
+  <!-- Game Content -->
+  <main class="flex-1 flex overflow-hidden">
+    <!-- Left Sidebar - Players -->
+    <aside class="w-64 bg-white border-r border-gray-200 overflow-y-auto">
+      <app-player-list 
+        [players]="players()" 
+        [currentDrawerId]="currentDrawerId()"
+        [scores]="scores()"
+      ></app-player-list>
+    </aside>
+
+    <!-- Center - Canvas -->
+    <div class="flex-1 flex flex-col">
+      @if (gameActive()) {
+        <app-drawing-canvas
+          [isDrawer]="isCurrentDrawer()"
+          (strokeEmitted)="onStroke($event)"
+          (canvasCleared)="onClearCanvas()"
+        ></app-drawing-canvas>
+      } @else {
+        <!-- Waiting Room -->
+        <div class="flex-1 flex items-center justify-center bg-gradient-to-br from-purple-500 to-blue-500">
+          <div class="text-center text-white">
+            <h2 class="text-4xl font-bold mb-4">Waiting for Players</h2>
+            <p class="text-xl mb-8">{{ players().length }} / {{ maxPlayers() }} players ready</p>
+            
+            <div class="flex flex-wrap justify-center gap-4 mb-8">
+              @for (player of players(); track player.id) {
+                <div class="flex items-center gap-2 bg-white/20 px-4 py-2 rounded-full">
+                  <span class="text-2xl">{{ player.isReady ? '✅' : '⏳' }}</span>
+                  <span>{{ player.name }}</span>
+                </div>
+              }
+            </div>
+
+            @if (!isReady()) {
+              <button
+                (click)="setReady(true)"
+                class="px-8 py-4 text-xl font-bold bg-green-500 rounded-xl hover:bg-green-600 shadow-lg transition"
+              >
+                I'm Ready!
+              </button>
+            } @else {
+              <button
+                (click)="setReady(false)"
+                class="px-8 py-4 text-xl font-bold bg-gray-500 rounded-xl hover:bg-gray-600 shadow-lg transition"
+              >
+                Wait, not yet!
+              </button>
+            }
+
+            <p class="mt-6 text-white/70">Game starts when all players are ready</p>
+          </div>
+        </div>
+      }
+    </div>
+
+    <!-- Right Sidebar - Chat -->
+    <aside class="w-80 bg-white border-l border-gray-200 flex flex-col">
+      <app-chat 
+        [messages]="chatMessages()"
+        [disabled]="isCurrentDrawer() && gameActive()"
+        (messageSubmitted)="onChatMessage($event)"
+      ></app-chat>
+    </aside>
+  </main>
+
+  <!-- Round End Modal -->
+  @if (roundEnded()) {
+    <div class="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+      <div class="bg-white rounded-2xl p-8 max-w-md w-full mx-4 text-center shadow-2xl animate-bounce-in">
+        <h2 class="text-2xl font-bold text-gray-900 mb-4">Round Over!</h2>
+        <p class="text-4xl mb-4">{{ revealedWord() }}</p>
+        <p class="text-gray-600 mb-6">Get ready for the next round...</p>
+      </div>
+    </div>
+  }
+
+  <!-- Game End Modal -->
+  @if (gameResults()) {
+    <div class="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+      <div class="bg-white rounded-2xl p-8 max-w-lg w-full mx-4 text-center shadow-2xl">
+        <h2 class="text-3xl font-bold text-gray-900 mb-2">🎉 Game Over!</h2>
+        <p class="text-xl text-purple-600 mb-6">Winner: {{ gameResults()?.winnerName }}</p>
+        
+        <div class="space-y-3 mb-8">
+          @for (entry of sortedScores(); track entry.playerId; let i = $index) {
+            <div 
+              class="flex items-center justify-between px-4 py-3 rounded-lg"
+              [ngClass]="{
+                'bg-yellow-100': i === 0,
+                'bg-gray-100': i === 1,
+                'bg-orange-100': i === 2,
+                'bg-gray-50': i > 2
+              }"
+            >
+              <span class="flex items-center gap-2">
+                <span class="text-xl">{{ i === 0 ? '🥇' : i === 1 ? '🥈' : i === 2 ? '🥉' : (i + 1) + '.' }}</span>
+                <span class="font-medium">{{ entry.playerName }}</span>
+              </span>
+              <span class="font-bold text-purple-600">{{ entry.score }} pts</span>
+            </div>
+          }
+        </div>
+
+        <button
+          (click)="playAgain()"
+          class="px-8 py-3 bg-purple-600 text-white font-medium rounded-lg hover:bg-purple-700 transition"
+        >
+          Play Again
+        </button>
+      </div>
+    </div>
+  }
+</div>

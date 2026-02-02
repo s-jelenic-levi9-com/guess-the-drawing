@@ -1,0 +1,87 @@
+<div class="flex-1 flex flex-col bg-gray-200">
+  <!-- Toolbar -->
+  @if (isDrawer) {
+    <div class="bg-white border-b border-gray-300 px-4 py-2 flex items-center gap-4 flex-wrap">
+      <!-- Colors -->
+      <div class="flex items-center gap-2">
+        @for (color of colors; track color) {
+          <button
+            (click)="selectColor(color)"
+            class="w-8 h-8 rounded-full border-2 transition hover:scale-110"
+            [style.background-color]="color"
+            [class.ring-2]="currentColor() === color"
+            [class.ring-offset-2]="currentColor() === color"
+            [class.ring-purple-500]="currentColor() === color"
+          ></button>
+        }
+      </div>
+
+      <div class="w-px h-8 bg-gray-300"></div>
+
+      <!-- Brush Sizes -->
+      <div class="flex items-center gap-2">
+        @for (size of brushSizes; track size) {
+          <button
+            (click)="selectBrushSize(size)"
+            class="flex items-center justify-center w-10 h-10 rounded-lg hover:bg-gray-100 transition"
+            [class.bg-purple-100]="currentBrushSize() === size"
+          >
+            <div 
+              class="rounded-full bg-gray-800"
+              [style.width.px]="size"
+              [style.height.px]="size"
+            ></div>
+          </button>
+        }
+      </div>
+
+      <div class="w-px h-8 bg-gray-300"></div>
+
+      <!-- Tools -->
+      <button
+        (click)="selectTool('eraser')"
+        class="p-2 rounded-lg hover:bg-gray-100 transition"
+        [class.bg-purple-100]="currentTool() === 'eraser'"
+      >
+        🧹 Eraser
+      </button>
+
+      <button
+        (click)="selectTool('brush')"
+        class="p-2 rounded-lg hover:bg-gray-100 transition"
+        [class.bg-purple-100]="currentTool() === 'brush'"
+      >
+        🖌️ Brush
+      </button>
+
+      <div class="w-px h-8 bg-gray-300"></div>
+
+      <!-- Clear -->
+      <button
+        (click)="clearCanvas()"
+        class="px-4 py-2 bg-red-500 text-white rounded-lg hover:bg-red-600 transition"
+      >
+        🗑️ Clear
+      </button>
+
+      <button
+        (click)="undo()"
+        class="px-4 py-2 bg-gray-500 text-white rounded-lg hover:bg-gray-600 transition"
+        [disabled]="strokeHistory.length === 0"
+      >
+        ↩️ Undo
+      </button>
+    </div>
+  }
+
+  <!-- Canvas -->
+  <div class="flex-1 flex items-center justify-center p-4 overflow-hidden">
+    <canvas
+      #canvas
+      class="bg-white rounded-lg shadow-lg cursor-crosshair"
+      [class.pointer-events-none]="!isDrawer"
+      width="800"
+      height="600"
+    ></canvas>
+  </div>
+</div>

@@ -1,0 +1,56 @@
+<div class="p-4">
+  <h3 class="font-semibold text-gray-700 mb-4">👥 Players</h3>
+  
+  <div class="space-y-2">
+    @for (player of sortedPlayers; track player.id; let i = $index) {
+      <div 
+        class="flex items-center gap-3 p-3 rounded-lg transition"
+        [ngClass]="{
+          'bg-purple-100 border-2 border-purple-400': player.id === currentDrawerId,
+          'bg-green-50': player.hasGuessed && player.id !== currentDrawerId,
+          'bg-gray-50': !player.hasGuessed && player.id !== currentDrawerId
+        }"
+      >
+        <!-- Rank -->
+        <span class="w-6 text-center font-bold text-gray-500">
+          {{ i === 0 ? '🥇' : i === 1 ? '🥈' : i === 2 ? '🥉' : (i + 1) }}
+        </span>
+
+        <!-- Avatar -->
+        <div class="relative">
+          <div class="w-10 h-10 rounded-full bg-gradient-to-br from-purple-400 to-blue-500 flex items-center justify-center text-white font-bold">
+            {{ player.name.charAt(0).toUpperCase() }}
+          </div>
+          @if (player.id === currentDrawerId) {
+            <span class="absolute -bottom-1 -right-1 text-lg">✏️</span>
+          }
+          @if (player.hasGuessed) {
+            <span class="absolute -bottom-1 -right-1 text-lg">✅</span>
+          }
+        </div>
+
+        <!-- Info -->
+        <div class="flex-1 min-w-0">
+          <p class="font-medium text-gray-900 truncate">
+            {{ player.name }}
+            @if (player.id === currentDrawerId) {
+              <span class="text-purple-600">(Drawing)</span>
+            }
+          </p>
+          <p class="text-sm text-gray-500">
+            {{ getPlayerScore(player.id) }} points
+          </p>
+        </div>
+
+        <!-- Status -->
+        <div>
+          @if (player.connectionStatus === 'disconnected') {
+            <span class="px-2 py-1 text-xs bg-red-100 text-red-600 rounded-full">Offline</span>
+          } @else if (player.isReady) {
+            <span class="px-2 py-1 text-xs bg-green-100 text-green-600 rounded-full">Ready</span>
+          }
+        </div>
+      </div>
+    }
+  </div>
+</div>

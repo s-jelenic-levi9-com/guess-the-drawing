@@ -1,0 +1,11 @@
+<div 
+  class="flex items-center gap-2 px-4 py-2 rounded-lg font-mono text-lg font-bold"
+  [ngClass]="{
+    'bg-green-500/20 text-green-100': timeLeft() > 30,
+    'bg-yellow-500/20 text-yellow-100': timeLeft() <= 30 && timeLeft() > 10,
+    'bg-red-500/20 text-red-100 animate-pulse': timeLeft() <= 10
+  }"
+>
+  <span class="text-xl">⏱️</span>
+  <span>{{ formatTime(timeLeft()) }}</span>
+</div>

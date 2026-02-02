@@ -1,0 +1,97 @@
+<div class="min-h-screen flex items-center justify-center bg-gradient-to-br from-purple-600 to-blue-500 py-12 px-4 sm:px-6 lg:px-8">
+  <div class="max-w-md w-full space-y-8 bg-white rounded-2xl shadow-2xl p-8">
+    <div class="text-center">
+      <h1 class="text-4xl font-bold text-gray-900 mb-2">🎨 Guess the Drawing</h1>
+      <h2 class="text-xl text-gray-600">Create your account</h2>
+    </div>
+    
+    <form [formGroup]="registerForm" (ngSubmit)="onSubmit()" class="mt-8 space-y-6">
+      @if (error()) {
+        <div class="bg-red-50 border border-red-200 text-red-600 px-4 py-3 rounded-lg text-sm">
+          {{ error() }}
+        </div>
+      }
+      
+      <div class="space-y-4">
+        <div>
+          <label for="username" class="block text-sm font-medium text-gray-700 mb-1">Username</label>
+          <input
+            id="username"
+            type="text"
+            formControlName="username"
+            class="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent transition"
+            placeholder="AwesomeDrawer123"
+          />
+          @if (registerForm.get('username')?.touched && registerForm.get('username')?.errors) {
+            <p class="mt-1 text-sm text-red-500">Username must be 3-50 characters</p>
+          }
+        </div>
+        
+        <div>
+          <label for="email" class="block text-sm font-medium text-gray-700 mb-1">Email</label>
+          <input
+            id="email"
+            type="email"
+            formControlName="email"
+            class="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent transition"
+            placeholder="you@example.com"
+          />
+          @if (registerForm.get('email')?.touched && registerForm.get('email')?.errors) {
+            <p class="mt-1 text-sm text-red-500">Please enter a valid email</p>
+          }
+        </div>
+        
+        <div>
+          <label for="password" class="block text-sm font-medium text-gray-700 mb-1">Password</label>
+          <input
+            id="password"
+            type="password"
+            formControlName="password"
+            class="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent transition"
+            placeholder="••••••••"
+          />
+          @if (registerForm.get('password')?.touched && registerForm.get('password')?.errors) {
+            <p class="mt-1 text-sm text-red-500">Password must be at least 6 characters</p>
+          }
+        </div>
+
+        <div>
+          <label for="confirmPassword" class="block text-sm font-medium text-gray-700 mb-1">Confirm Password</label>
+          <input
+            id="confirmPassword"
+            type="password"
+            formControlName="confirmPassword"
+            class="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent transition"
+            placeholder="••••••••"
+          />
+          @if (registerForm.get('confirmPassword')?.touched && passwordMismatch) {
+            <p class="mt-1 text-sm text-red-500">Passwords do not match</p>
+          }
+        </div>
+      </div>
+
+      <button
+        type="submit"
+        [disabled]="isLoading()"
+        class="w-full flex justify-center py-3 px-4 border border-transparent rounded-lg shadow-sm text-lg font-medium text-white bg-purple-600 hover:bg-purple-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-purple-500 disabled:opacity-50 disabled:cursor-not-allowed transition"
+      >
+        @if (isLoading()) {
+          <svg class="animate-spin -ml-1 mr-3 h-5 w-5 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+            <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+            <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+          </svg>
+          Creating account...
+        } @else {
+          Create account
+        }
+      </button>
+
+      <p class="text-center text-sm text-gray-600">
+        Already have an account?
+        <a routerLink="/login" class="font-medium text-purple-600 hover:text-purple-500">
+          Sign in here
+        </a>
+      </p>
+    </form>
+  </div>
+</div>

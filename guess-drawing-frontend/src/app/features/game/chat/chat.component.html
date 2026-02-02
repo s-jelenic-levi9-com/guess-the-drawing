@@ -1,0 +1,50 @@
+<div class="flex flex-col h-full">
+  <div class="p-3 border-b border-gray-200">
+    <h3 class="font-semibold text-gray-700">💬 Chat & Guesses</h3>
+  </div>
+
+  <!-- Messages -->
+  <div #messagesContainer class="flex-1 overflow-y-auto p-3 space-y-2">
+    @for (message of messages; track message.timestamp) {
+      <div 
+        class="rounded-lg p-2 text-sm"
+        [ngClass]="{
+          'bg-green-100 text-green-800': message.isCorrectGuess,
+          'bg-gray-100': !message.isCorrectGuess
+        }"
+      >
+        <span class="font-medium text-gray-900">{{ message.playerName }}: </span>
+        @if (message.isCorrectGuess) {
+          <span class="text-green-700 font-medium">guessed the word! 🎉</span>
+        } @else {
+          <span class="text-gray-700">{{ message.message }}</span>
+        }
+      </div>
+    }
+
+    @if (messages.length === 0) {
+      <p class="text-center text-gray-400 py-8">No messages yet. Start guessing!</p>
+    }
+  </div>
+
+  <!-- Input -->
+  <div class="p-3 border-t border-gray-200">
+    <div class="flex gap-2">
+      <input
+        type="text"
+        [(ngModel)]="newMessage"
+        (keydown.enter)="sendMessage()"
+        [disabled]="disabled"
+        [placeholder]="disabled ? 'You are drawing...' : 'Type your guess...'"
+        class="flex-1 px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent disabled:bg-gray-100 disabled:cursor-not-allowed"
+      />
+      <button
+        (click)="sendMessage()"
+        [disabled]="disabled || !newMessage.trim()"
+        class="px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 disabled:bg-gray-300 disabled:cursor-not-allowed transition"
+      >
+        Send
+      </button>
+    </div>
+  </div>
+</div>
