@@ -1,5 +1,5 @@
 export const environment = {
   production: true,
-  apiUrl: 'https://api.guessdrawing.com/v1',
-  wsUrl: 'wss://ws.guessdrawing.com',
+  apiUrl: 'http://46.137.53.11:3000/api/v1',
+  wsUrl: 'ws://46.137.53.11:3000',
 };

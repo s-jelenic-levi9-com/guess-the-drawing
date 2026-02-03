@@ -31,7 +31,6 @@ Resources:
   RedisCluster:
     Type: AWS::ElastiCache::CacheCluster
     Properties:
-      CacheClusterId: !Sub '${EnvironmentName}-redis'
       Engine: redis
       CacheNodeType: !Ref CacheNodeType
       NumCacheNodes: 1

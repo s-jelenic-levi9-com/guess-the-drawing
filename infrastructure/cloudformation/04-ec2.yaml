@@ -27,7 +27,7 @@ Mappings:
     us-west-2:
       AMI: ami-0efb097fb8fd3e739
     eu-west-1:
-      AMI: ami-0694d931cee176e7d
+      AMI: ami-045b17fd099062e5d  # Amazon Linux 2023 x86_64
 
 Resources:
   # Elastic IP
@@ -57,71 +57,97 @@ Resources:
       UserData:
         Fn::Base64: !Sub |
           #!/bin/bash
-          set -e
           
-          # Log everything
-          exec > >(tee /var/log/user-data.log)
-          exec 2>&1
+          # Log everything - DO NOT use set -e (we handle errors manually)
+          exec > >(tee /var/log/user-data.log) 2>&1
           
-          echo "Starting EC2 instance setup..."
+          echo "========================================="
+          echo "EC2 Setup Started"
+          date
+          echo "========================================="
           
-          # Update system
+          # 1. Install system packages
+          echo ">>> Installing packages..."
           yum update -y
-          
-          # Install Node.js 20
           curl -fsSL https://rpm.nodesource.com/setup_20.x | bash -
-          yum install -y nodejs
+          yum install -y nodejs git postgresql15
           
-          # Install Git
-          yum install -y git
+          # 2. Install global npm packages
+          echo ">>> Installing PM2 and TypeScript globally..."
+          npm install -g pm2 typescript
           
-          # Install PostgreSQL client
-          yum install -y postgresql15
+          # Verify installations
+          echo "Node version:"
+          node --version
+          echo "npm version:"
+          npm --version
+          echo "PM2 version:"
+          pm2 --version
+          echo "TypeScript version:"
+          tsc --version
           
-          # Install PM2 globally
-          npm install -g pm2
-          
-          # Create app directory
+          # 3. Clone repository
+          echo ">>> Cloning repository..."
           mkdir -p /home/ec2-user/apps
           cd /home/ec2-user/apps
+          rm -rf my-bmad
+          git clone https://github.com/s-jelenic-levi9-com/guess-the-drawing.git my-bmad
           
-          # Clone repository
-          git clone https://github.com/s-jelenic-levi9-com/guess-the-drawing.git
-          cd my-bmad/guess-drawing-backend
-          
-          # Create minimal .env file (secrets will be fetched from AWS Secrets Manager at runtime)
-          cat > .env << 'EOF'
+          # 4. Create .env file
+          echo ">>> Creating .env file..."
+          cat > /home/ec2-user/apps/my-bmad/guess-drawing-backend/.env << ENVEOF
           NODE_ENV=production
           PORT=3000
           DATABASE_SSL=true
           AWS_REGION=${AWS::Region}
-          EOF
+          USE_SECRETS_MANAGER=true
+          ENVIRONMENT_NAME=guess-drawing
+          ENVEOF
+          sed -i 's/^[[:space:]]*//' /home/ec2-user/apps/my-bmad/guess-drawing-backend/.env
+          echo "Created .env:"
+          cat /home/ec2-user/apps/my-bmad/guess-drawing-backend/.env
           
-          # Fix ownership
+          # 5. Fix ownership
           chown -R ec2-user:ec2-user /home/ec2-user/apps
           
-          # Switch to ec2-user and install dependencies
-          sudo -u ec2-user bash << 'USEREOF'
+          # 6. Install dependencies and build (as ec2-user)
+          echo ">>> Installing dependencies and building..."
           cd /home/ec2-user/apps/my-bmad/guess-drawing-backend
           
-          # Install dependencies (including AWS SDK)
-          npm ci --only=production
+          # Delete lock file to avoid sync issues, use fresh install
+          rm -f package-lock.json
           
-          # Build TypeScript
-          npm run build
+          sudo -u ec2-user npm install
+          sudo -u ec2-user npm run build
           
-          # Start with PM2
-          pm2 start dist/index.js --name guess-drawing-backend
-          pm2 save
+          # 7. Verify build succeeded
+          if [ ! -f "dist/index.js" ]; then
+            echo "ERROR: Build failed - dist/index.js not found"
+            ls -la dist/ 2>/dev/null || echo "dist folder missing"
+            exit 1
+          fi
+          echo "Build successful:"
+          ls -lh dist/index.js
           
-          # Setup PM2 startup
-          pm2 startup systemd -u ec2-user --hp /home/ec2-user
-          USEREOF
+          # 8. Start with PM2
+          echo ">>> Starting PM2..."
+          sudo -u ec2-user pm2 start dist/index.js --name guess-drawing-backend
+          sudo -u ec2-user pm2 save
           
-          # Enable PM2 startup
-          env PATH=$PATH:/usr/bin /usr/local/lib/node_modules/pm2/bin/pm2 startup systemd -u ec2-user --hp /home/ec2-user
+          # 9. Configure PM2 startup
+          env PATH=/usr/local/bin:/usr/bin:/bin pm2 startup systemd -u ec2-user --hp /home/ec2-user
+          systemctl enable pm2-ec2-user || echo "PM2 service enable skipped"
           
-          echo "EC2 instance setup complete!"
+          # 10. Health check
+          echo ">>> Waiting for backend to start..."
+          sleep 5
+          curl -s http://localhost:3000/api/v1/health || echo "Health check pending - backend may still be starting"
+          
+          echo "========================================="
+          echo "EC2 Setup Complete"
+          date
+          echo "========================================="
+          sudo -u ec2-user pm2 status
 
       Tags:
         - Key: Name

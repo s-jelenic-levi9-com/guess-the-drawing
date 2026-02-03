@@ -13,20 +13,21 @@ NC='\033[0m' # No Color
 
 # Configuration
 ENVIRONMENT_NAME="guess-drawing"
-REGION="us-east-1"
+REGION="eu-west-1"
 SCRIPTS_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/cloudformation"
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/.."
 
 # Function to print colored output
 print_info() {
-    echo -e "${GREEN}[INFO]${NC} $1"
+    echo -e "${GREEN}[INFO]${NC} $1" >&2
 }
 
 print_warn() {
-    echo -e "${YELLOW}[WARN]${NC} $1"
+    echo -e "${YELLOW}[WARN]${NC} $1" >&2
 }
 
 print_error() {
-    echo -e "${RED}[ERROR]${NC} $1"
+    echo -e "${RED}[ERROR]${NC} $1" >&2
 }
 
 # Function to check if AWS CLI is configured
@@ -37,12 +38,12 @@ check_aws_cli() {
         exit 1
     fi
     
-    if ! aws sts get-caller-identity &> /dev/null; then
-        print_error "AWS CLI is not configured. Run 'aws configure' first."
+    if ! aws sts get-caller-identity --region "$REGION" &> /dev/null; then
+        print_error "AWS CLI is not configured or credentials are invalid."
         exit 1
     fi
     
-    ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
+    ACCOUNT_ID=$(aws sts get-caller-identity --region "$REGION" --query Account --output text)
     print_info "Using AWS Account: $ACCOUNT_ID"
 }
 
@@ -85,8 +86,8 @@ deploy_stack() {
     
     # Check if stack exists
     if aws cloudformation describe-stacks --stack-name "$STACK_NAME" --region "$REGION" &> /dev/null; then
-        print_warn "Stack $STACK_NAME already exists. Updating..."
-        ACTION="update-stack"
+        print_warn "Stack $STACK_NAME already exists. Skipping..."
+        return 0
     else
         print_info "Creating new stack: $STACK_NAME"
         ACTION="create-stack"
@@ -99,18 +100,13 @@ deploy_stack() {
         --parameters "${PARAMETERS[@]}" \
         --capabilities CAPABILITY_IAM CAPABILITY_NAMED_IAM \
         --region "$REGION" || {
-            if [[ "$ACTION" == "update-stack" ]]; then
-                print_warn "No updates to be performed on $STACK_NAME"
-                return 0
-            else
-                print_error "Failed to deploy $STACK_NAME"
-                return 1
-            fi
+            print_error "Failed to deploy $STACK_NAME"
+            return 1
         }
     
     # Wait for stack to complete
     print_info "Waiting for stack $STACK_NAME to complete..."
-    aws cloudformation wait "stack-$([[ "$ACTION" == "create-stack" ]] && echo create || echo update)-complete" \
+    aws cloudformation wait "stack-create-complete" \
         --stack-name "$STACK_NAME" \
         --region "$REGION"
     
@@ -127,6 +123,123 @@ get_stack_output() {
         --query "Stacks[0].Outputs[?OutputKey=='$OUTPUT_KEY'].OutputValue" \
         --output text \
         --region "$REGION"
+}
+
+# Function to create Secrets Manager secrets
+create_secrets() {
+    local DB_PASS=$1
+    local JWT_SEC=$2
+    local JWT_REF_SEC=$3
+    
+    print_info "Creating Secrets Manager secrets..."
+    
+    # Get database endpoint
+    local DB_ENDPOINT=$(get_stack_output "${ENVIRONMENT_NAME}-rds" "DBEndpoint")
+    local REDIS_ENDPOINT=$(get_stack_output "${ENVIRONMENT_NAME}-cache" "RedisEndpoint")
+    
+    # Create DB secret
+    if ! aws secretsmanager describe-secret --secret-id "${ENVIRONMENT_NAME}/db" --region "$REGION" &> /dev/null; then
+        print_info "Creating secret: ${ENVIRONMENT_NAME}/db"
+        aws secretsmanager create-secret \
+            --name "${ENVIRONMENT_NAME}/db" \
+            --secret-string "{\"host\":\"$DB_ENDPOINT\",\"port\":5432,\"username\":\"postgres\",\"password\":\"$DB_PASS\",\"database\":\"guess_drawing\"}" \
+            --region "$REGION" > /dev/null
+        print_info "Secret created: ${ENVIRONMENT_NAME}/db"
+    else
+        print_warn "Secret already exists: ${ENVIRONMENT_NAME}/db"
+    fi
+    
+    # Create Redis secret
+    if ! aws secretsmanager describe-secret --secret-id "${ENVIRONMENT_NAME}/redis" --region "$REGION" &> /dev/null; then
+        print_info "Creating secret: ${ENVIRONMENT_NAME}/redis"
+        aws secretsmanager create-secret \
+            --name "${ENVIRONMENT_NAME}/redis" \
+            --secret-string "{\"host\":\"$REDIS_ENDPOINT\",\"port\":6379}" \
+            --region "$REGION" > /dev/null
+        print_info "Secret created: ${ENVIRONMENT_NAME}/redis"
+    else
+        print_warn "Secret already exists: ${ENVIRONMENT_NAME}/redis"
+    fi
+    
+    # Create JWT secret
+    if ! aws secretsmanager describe-secret --secret-id "${ENVIRONMENT_NAME}/jwt" --region "$REGION" &> /dev/null; then
+        print_info "Creating secret: ${ENVIRONMENT_NAME}/jwt"
+        aws secretsmanager create-secret \
+            --name "${ENVIRONMENT_NAME}/jwt" \
+            --secret-string "{\"JWT_SECRET\":\"$JWT_SEC\",\"JWT_REFRESH_SECRET\":\"$JWT_REF_SEC\"}" \
+            --region "$REGION" > /dev/null
+        print_info "Secret created: ${ENVIRONMENT_NAME}/jwt"
+    else
+        print_warn "Secret already exists: ${ENVIRONMENT_NAME}/jwt"
+    fi
+}
+
+# Function to build and upload frontend
+build_and_upload_frontend() {
+    local BACKEND_IP=$1
+    local S3_BUCKET=$2
+    local CLOUDFRONT_ID=$3
+    
+    print_info "Building and uploading Angular frontend..."
+    
+    # Check if frontend directory exists
+    if [ ! -d "$ROOT_DIR/guess-drawing-frontend" ]; then
+        print_error "Frontend directory not found: $ROOT_DIR/guess-drawing-frontend"
+        return 1
+    fi
+    
+    cd "$ROOT_DIR/guess-drawing-frontend"
+    
+    # Install dependencies
+    print_info "Installing frontend dependencies..."
+    npm install
+    
+    # Update environment.prod.ts with backend IP
+    print_info "Updating environment configuration with backend IP: $BACKEND_IP"
+    sed -i '' "s|'http://localhost:3000'|'http://$BACKEND_IP:3000'|g" src/environments/environment.prod.ts
+    
+    # Build production bundle
+    print_info "Building production bundle..."
+    npm run build -- --configuration=production
+    
+    # Upload to S3
+    print_info "Uploading to S3 bucket: $S3_BUCKET"
+    aws s3 sync dist/guess-drawing-frontend/browser/ "s3://$S3_BUCKET" \
+        --delete \
+        --region "$REGION"
+    
+    # Invalidate CloudFront
+    print_info "Invalidating CloudFront cache..."
+    aws cloudfront create-invalidation \
+        --distribution-id "$CLOUDFRONT_ID" \
+        --paths '/*' \
+        --region "$REGION" > /dev/null
+    
+    print_info "Frontend deployed successfully!"
+    cd - > /dev/null
+}
+
+# Function to update CORS on backend
+update_backend_cors() {
+    local BACKEND_IP=$1
+    local CLOUDFRONT_DOMAIN=$2
+    local KEY_PATH="$3"
+    
+    print_info "Updating backend CORS configuration..."
+    
+    # SSH into EC2 and update .env with CloudFront domain
+    print_info "Connecting to EC2 instance at $BACKEND_IP..."
+    ssh -i "$KEY_PATH" -o StrictHostKeyChecking=no -o ConnectTimeout=10 ec2-user@"$BACKEND_IP" << 'EOF' || print_warn "Could not connect to EC2 - it may still be initializing"
+        echo "[INFO] Updating .env file with CloudFront domain..."
+        # Update CORS_ORIGIN in .env
+        sudo sed -i "s|CORS_ORIGIN=.*|CORS_ORIGIN=https://$CLOUDFRONT_DOMAIN|g" /home/ec2-user/guess-the-drawing/.env 2>/dev/null || true
+        # Restart backend services
+        echo "[INFO] Restarting PM2 services..."
+        pm2 restart all 2>/dev/null || true
+        echo "[INFO] Backend CORS updated and restarted!"
+EOF
+    
+    print_info "Backend CORS configuration updated!"
 }
 
 # Main deployment function
@@ -156,7 +269,6 @@ deploy_infrastructure() {
     KEY_NAME=$(create_key_pair)
     
     # Prompt for GitHub repository URL
-    read -p "Enter your GitHub repository URL (default: https://github.com/YOUR_USERNAME/my-bmad.git): " GITHUB_REPO
     GITHUB_REPO=${GITHUB_REPO:-"https://github.com/s-jelenic-levi9-com/guess-the-drawing.git"}
     
     print_info "=== Deployment Configuration ==="
@@ -173,26 +285,29 @@ deploy_infrastructure() {
     fi
     
     # Deploy stacks in order
-    print_info "\n=== Step 1/5: Deploying VPC Stack ==="
+    print_info "\n=== Step 1/7: Deploying VPC Stack ==="
     deploy_stack \
         "${ENVIRONMENT_NAME}-vpc" \
         "$SCRIPTS_DIR/01-vpc.yaml" \
         "ParameterKey=EnvironmentName,ParameterValue=$ENVIRONMENT_NAME"
     
-    print_info "\n=== Step 2/5: Deploying RDS Stack ==="
+    print_info "\n=== Step 2/7: Deploying RDS Stack ==="
     deploy_stack \
         "${ENVIRONMENT_NAME}-rds" \
         "$SCRIPTS_DIR/02-rds.yaml" \
         "ParameterKey=EnvironmentName,ParameterValue=$ENVIRONMENT_NAME" \
         "ParameterKey=DBMasterPassword,ParameterValue=$DB_PASSWORD"
     
-    print_info "\n=== Step 3/5: Deploying ElastiCache Stack ==="
+    print_info "\n=== Step 3/7: Deploying ElastiCache Stack ==="
     deploy_stack \
-        "${ENVIRONMENT_NAME}-elasticache" \
+        "${ENVIRONMENT_NAME}-cache" \
         "$SCRIPTS_DIR/03-elasticache.yaml" \
         "ParameterKey=EnvironmentName,ParameterValue=$ENVIRONMENT_NAME"
     
-    print_info "\n=== Step 4/5: Deploying Frontend Stack ==="
+    print_info "\n=== Step 4/7: Creating Secrets Manager Secrets ==="
+    create_secrets "$DB_PASSWORD" "$JWT_SECRET" "$JWT_REFRESH_SECRET"
+    
+    print_info "\n=== Step 5/7: Deploying Frontend Stack ==="
     deploy_stack \
         "${ENVIRONMENT_NAME}-frontend" \
         "$SCRIPTS_DIR/05-frontend.yaml" \
@@ -201,24 +316,29 @@ deploy_infrastructure() {
     # Get CloudFront domain for EC2 CORS configuration
     CLOUDFRONT_DOMAIN=$(get_stack_output "${ENVIRONMENT_NAME}-frontend" "CloudFrontDomain")
     
-    print_info "\n=== Step 5/5: Deploying EC2 Backend Stack ==="
+    print_info "\n=== Step 6/7: Deploying EC2 Backend Stack ==="
     deploy_stack \
         "${ENVIRONMENT_NAME}-ec2" \
         "$SCRIPTS_DIR/04-ec2.yaml" \
         "ParameterKey=EnvironmentName,ParameterValue=$ENVIRONMENT_NAME" \
-        "ParameterKey=KeyName,ParameterValue=$KEY_NAME" \
-        "ParameterKey=GitHubRepo,ParameterValue=$GITHUB_REPO" \
-        "ParameterKey=DBMasterPassword,ParameterValue=$DB_PASSWORD" \
-        "ParameterKey=JWTSecret,ParameterValue=$JWT_SECRET" \
-        "ParameterKey=JWTRefreshSecret,ParameterValue=$JWT_REFRESH_SECRET" \
-        "ParameterKey=CloudFrontDomain,ParameterValue=https://$CLOUDFRONT_DOMAIN"
+        "ParameterKey=KeyName,ParameterValue=$KEY_NAME"
+    
+    print_info "\n=== Waiting for EC2 initialization (5 minutes) ==="
+    print_warn "EC2 UserData script is running, this takes ~5-10 minutes. Waiting..."
+    sleep 300
     
     # Get all outputs
     DB_ENDPOINT=$(get_stack_output "${ENVIRONMENT_NAME}-rds" "DBEndpoint")
-    REDIS_ENDPOINT=$(get_stack_output "${ENVIRONMENT_NAME}-elasticache" "RedisEndpoint")
+    REDIS_ENDPOINT=$(get_stack_output "${ENVIRONMENT_NAME}-cache" "RedisEndpoint")
     BACKEND_IP=$(get_stack_output "${ENVIRONMENT_NAME}-ec2" "ElasticIP")
     S3_BUCKET=$(get_stack_output "${ENVIRONMENT_NAME}-frontend" "BucketName")
     CLOUDFRONT_ID=$(get_stack_output "${ENVIRONMENT_NAME}-frontend" "CloudFrontDistributionId")
+    
+    print_info "\n=== Step 7/7: Building and Deploying Frontend ==="
+    build_and_upload_frontend "$BACKEND_IP" "$S3_BUCKET" "$CLOUDFRONT_ID"
+    
+    print_info "\n=== Updating Backend CORS Configuration ==="
+    update_backend_cors "$BACKEND_IP" "$CLOUDFRONT_DOMAIN" ~/.ssh/${KEY_NAME}.pem
     
     # Print deployment summary
     print_info "\n========================================="
@@ -245,14 +365,10 @@ deploy_infrastructure() {
     echo "🔗 SSH to Backend:"
     echo "  ssh -i ~/.ssh/${KEY_NAME}.pem ec2-user@$BACKEND_IP"
     echo ""
-    echo "📝 Next Steps:"
-    echo "  1. Update frontend environment.prod.ts with Backend IP"
-    echo "  2. Build and deploy frontend:"
-    echo "     cd guess-drawing-frontend"
-    echo "     npm run build -- --configuration=production"
-    echo "     aws s3 sync dist/guess-drawing-frontend/browser/ s3://$S3_BUCKET --delete"
-    echo "     aws cloudfront create-invalidation --distribution-id $CLOUDFRONT_ID --paths '/*'"
-    echo "  3. Set up GitHub Actions secrets for CI/CD"
+    echo "✅ Secrets Manager Secrets Created:"
+    echo "  - ${ENVIRONMENT_NAME}/db (Database credentials)"
+    echo "  - ${ENVIRONMENT_NAME}/redis (Redis connection info)"
+    echo "  - ${ENVIRONMENT_NAME}/jwt (JWT signing secrets)"
     echo ""
     print_info "========================================="
 }
@@ -273,7 +389,7 @@ destroy_infrastructure() {
     STACKS=(
         "${ENVIRONMENT_NAME}-ec2"
         "${ENVIRONMENT_NAME}-frontend"
-        "${ENVIRONMENT_NAME}-elasticache"
+        "${ENVIRONMENT_NAME}-cache"
         "${ENVIRONMENT_NAME}-rds"
         "${ENVIRONMENT_NAME}-vpc"
     )

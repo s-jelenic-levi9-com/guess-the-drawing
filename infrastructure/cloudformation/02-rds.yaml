@@ -57,7 +57,7 @@ Resources:
       DBInstanceIdentifier: !Sub '${EnvironmentName}-db'
       DBName: guess_drawing
       Engine: postgres
-      EngineVersion: '15.4'
+      EngineVersion: '15.10'
       DBInstanceClass: !Ref DBInstanceClass
       AllocatedStorage: !Ref DBAllocatedStorage
       StorageType: gp2
